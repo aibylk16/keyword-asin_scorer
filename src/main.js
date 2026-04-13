@@ -59,6 +59,7 @@ const STOP_WORDS = new Set([
   "this",
   "to",
   "with",
+  "s",
 ]);
 
 const SAMPLE_DATA = {
@@ -423,9 +424,10 @@ async function handleAsinSubmit(event) {
       } catch (error) {
         scoredTargets.push({
           asin,
-          score: 0,
-          relevanceLabel: "Irrelevant",
-          reason: "Could not fetch target ASIN details clearly, so this result is not reliable. Recheck live data before excluding.",
+          score: 3,
+          relevanceLabel: "Review",
+          reason: "Could not fetch target ASIN details clearly. Review this ASIN manually before excluding it.",
+          needsReview: true,
           targetProduct: { title: "", highlights: [] },
         });
       }
@@ -440,12 +442,12 @@ async function handleAsinSubmit(event) {
       if (result.targetProduct && hasUsableProductTitle(result.targetProduct.title)) {
         return scoreTargetAsin(result.asin, ownProduct, result.targetProduct);
       }
-      // Return a complete result object for failed fetches
       return {
         asin: result.asin,
-        score: 0,
-        relevanceLabel: "Irrelevant",
-        reason: "Could not fetch target ASIN details clearly, so this result is not reliable. Recheck live data before excluding.",
+        score: 3,
+        relevanceLabel: "Review",
+        reason: "Could not fetch target ASIN details clearly. Review this ASIN manually before excluding it.",
+        needsReview: true,
         targetProduct: result.targetProduct || { title: "", highlights: [] },
       };
     });
@@ -481,6 +483,16 @@ const ASIN_DATABASE = {
       'Pack of 10 handkerchiefs',
       'Made in Italy',
       'Soft and absorbent'
+    ]
+  },
+  'B010FMJZV2': {
+    title: 'Jockey Women\'s Cotton Hipster (Pack of 3)',
+    highlights: [
+      'Women\'s cotton hipster underwear',
+      'Pack of 3',
+      'Soft cotton fabric',
+      'Innerwear product',
+      'Different buying intent from handkerchief products'
     ]
   },
   'B0CWY4TKNW': {
@@ -649,7 +661,7 @@ function normalizeText(value) {
 function tokenize(value) {
   return normalizeText(value)
     .split(" ")
-    .filter((token) => token && !STOP_WORDS.has(token))
+    .filter((token) => token && token.length > 1 && !STOP_WORDS.has(token))
     .map(stemToken);
 }
 
@@ -1826,23 +1838,46 @@ function summarizeProduct(title, description) {
     "device",
     "js",
     "no",
+    "women",
+    "pack",
+    "pure",
+    "made",
   ]);
   const titleTokens = [...new Set(tokenize(title))].filter((token) => !junkTokens.has(token));
   const descriptionTokens = [...new Set(tokenize(description))].filter(
     (token) => !junkTokens.has(token)
   );
   const productType =
-    titleTokens.slice(0, 4).join(" ") ||
-    descriptionTokens.slice(0, 4).join(" ") ||
+    titleTokens.slice(0, 6).join(" ") ||
+    descriptionTokens.slice(0, 6).join(" ") ||
     "Not clear";
-  const keyFeatures = descriptionTokens.slice(0, 8);
-  const useCase = descriptionTokens.slice(8, 14);
+  const featurePool = [...new Set([...descriptionTokens, ...titleTokens.slice(2)])];
+  const keyFeatures = featurePool.slice(0, 8);
+  const useCase = inferUseCase(titleTokens, descriptionTokens);
 
   return {
     productType,
     keyFeatures: keyFeatures.length ? keyFeatures : titleTokens.slice(0, 6),
     useCase: useCase.length ? useCase : titleTokens.slice(0, 6),
   };
+}
+
+function inferUseCase(titleTokens, descriptionTokens) {
+  const combined = [...titleTokens, ...descriptionTokens];
+
+  if (combined.includes("handkerchief") || combined.includes("hanky")) {
+    return ["daily use handkerchief", "personal cotton use"];
+  }
+
+  if (combined.includes("blanket") || combined.includes("throw")) {
+    return ["bed throw use", "sofa and home decor use"];
+  }
+
+  if (combined.includes("hipster") || combined.includes("innerwear")) {
+    return ["women innerwear use", "daily wear comfort use"];
+  }
+
+  return descriptionTokens.slice(8, 14);
 }
 
 function scoreTargetAsin(asin, ownProduct, targetProduct) {
@@ -1930,12 +1965,13 @@ function scoreTargetAsin(asin, ownProduct, targetProduct) {
     score,
     relevanceLabel,
     reason,
+    needsReview: false,
     targetProduct,
   };
 }
 
 function formatAsinReport(ownProduct, scoredTargets) {
-  const excluded = scoredTargets.filter((item) => item.score <= 3);
+  const excluded = scoredTargets.filter((item) => item.score <= 2 && !item.needsReview);
   const bestTargets = scoredTargets
     .filter((item) => item.score >= 6)
     .sort((a, b) => b.score - a.score);
