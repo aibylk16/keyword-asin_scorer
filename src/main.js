@@ -433,7 +433,7 @@ async function handleAsinSubmit(event) {
       }
 
       if (index < targetAsins.length - 1) {
-        await delay(600);
+        await delay(100);
       }
     }
     
@@ -542,35 +542,7 @@ async function fetchTargetAsinWithCache(asin) {
     };
   }
 
-  // Try Helium API first for real Amazon data
-  try {
-    console.log(`Trying Helium API for ASIN ${asin}...`);
-    const heliumResult = await fetchFromHeliumAPI(asin);
-    if (heliumResult && heliumResult.title) {
-      console.log(`Helium API success for ASIN ${asin}: ${heliumResult.title}`);
-      const targetProduct = {
-        sourceName: "Helium API",
-        asin: asin.toUpperCase(),
-        title: heliumResult.title,
-        highlights: heliumResult.highlights || []
-      };
-      
-      // Cache the Helium result
-      productCache.set(cacheKey, {
-        data: targetProduct,
-        timestamp: Date.now()
-      });
-      
-      return {
-        asin,
-        targetProduct
-      };
-    }
-  } catch (error) {
-    console.warn(`Helium API failed for ASIN ${asin}:`, error.message);
-  }
-
-  // Check hardcoded database as fallback
+  // Check hardcoded database first for instant known-ASIN fallback
   const hardcodedData = ASIN_DATABASE[asin.toUpperCase()];
   if (hardcodedData) {
     console.log(`Using hardcoded data for ASIN ${asin}: ${hardcodedData.title}`);
@@ -593,9 +565,36 @@ async function fetchTargetAsinWithCache(asin) {
     };
   }
 
+  // Try Helium API only after instant fallbacks
+  try {
+    console.log(`Trying Helium API for ASIN ${asin}...`);
+    const heliumResult = await fetchFromHeliumAPI(asin);
+    if (heliumResult && heliumResult.title) {
+      console.log(`Helium API success for ASIN ${asin}: ${heliumResult.title}`);
+      const targetProduct = {
+        sourceName: "Helium API",
+        asin: asin.toUpperCase(),
+        title: heliumResult.title,
+        highlights: heliumResult.highlights || []
+      };
+
+      productCache.set(cacheKey, {
+        data: targetProduct,
+        timestamp: Date.now()
+      });
+
+      return {
+        asin,
+        targetProduct
+      };
+    }
+  } catch (error) {
+    console.warn(`Helium API failed for ASIN ${asin}:`, error.message);
+  }
+
   // Fetch with timeout for non-hardcoded ASINs
   const url = `https://www.amazon.in/dp/${asin}`;
-  const targetProduct = await fetchProductDetailsWithTimeout(url, 8000); // 8 second timeout
+  const targetProduct = await fetchProductDetailsWithTimeout(url, 4500);
   
   // Cache the result
   productCache.set(cacheKey, {
@@ -609,12 +608,12 @@ async function fetchTargetAsinWithCache(asin) {
   };
 }
 
-async function fetchProductDetailsWithTimeout(url, timeout = 8000) {
+async function fetchProductDetailsWithTimeout(url, timeout = 4500) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
   
   try {
-    const result = await fetchProductDetails(url);
+    const result = await fetchProductDetails(url, timeout, { preferFast: true });
     clearTimeout(timeoutId);
     return result;
   } catch (error) {
@@ -1052,10 +1051,11 @@ function refineReason(score, reason, keyword, matchedTokens) {
   return reason;
 }
 
-async function fetchProductDetails(url, timeout = 12000) {
+async function fetchProductDetails(url, timeout = 12000, options = {}) {
   const normalizedUrl = normalizeUrl(url);
   const asinMatch = normalizedUrl.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
   const asin = asinMatch ? asinMatch[1].toUpperCase() : "";
+  const preferFast = Boolean(options.preferFast);
 
   try {
     const backendProduct = await fetchProductDetailsFromBackend({
@@ -1069,6 +1069,9 @@ async function fetchProductDetails(url, timeout = 12000) {
     }
   } catch (error) {
     console.warn("Backend fetch unavailable, falling back to browser fetch:", error.message);
+    if (preferFast && window.location.protocol !== "file:") {
+      throw error;
+    }
   }
 
   // Multiple proxy providers with different approaches
