@@ -44,6 +44,16 @@ textarea {
   position: relative;
 }
 
+.page-top-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 12px;
+}
+
+.page-home-link {
+  text-decoration: none;
+}
+
 .author-badge {
   position: absolute;
   top: 8px;
@@ -503,6 +513,10 @@ td:nth-child(2) {
   .app-shell {
     width: min(100% - 20px, 1240px);
     padding-top: 20px;
+  }
+
+  .page-top-actions {
+    margin-bottom: 10px;
   }
 
   .hero,
