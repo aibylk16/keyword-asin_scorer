@@ -218,12 +218,10 @@ function parseHtmlProduct(html, fallbackAsin = "", sourceName = "Amazon", url = 
   const title = extractTitleFromHtml(html);
   const bulletPoints = extractBulletPointsFromHtml(html);
   const description = extractDescriptionFromHtml(html, bulletPoints);
-  const sellingPrice = extractSellingPriceFromHtml(html);
+  const offerSignals = extractOfferSignalsFromHtml(html);
   const numberOfReviews = extractReviewCountFromHtml(html);
   const rating = extractRatingFromHtml(html);
   const backendKeywords = extractBackendKeywordsFromHtml(html);
-  const buyBoxWinner = extractBuyBoxWinnerFromHtml(html);
-  const dealStatus = extractDealStatusFromHtml(html);
 
   return {
     sourceName,
@@ -232,11 +230,15 @@ function parseHtmlProduct(html, fallbackAsin = "", sourceName = "Amazon", url = 
     title,
     bulletPoints,
     productDescription: description,
-    sellingPrice,
+    sellingPrice: offerSignals.sellingPrice,
+    mrp: offerSignals.mrp,
+    discountPercent: offerSignals.discountPercent,
     numberOfReviews,
     rating,
-    buyBoxWinner,
-    dealStatus,
+    availabilityStatus: offerSignals.availabilityStatus,
+    buyBoxAvailable: offerSignals.buyBoxAvailable,
+    buyBoxWinner: offerSignals.buyBoxWinner,
+    dealStatus: offerSignals.dealStatus,
     backendKeywords,
   };
 }
@@ -253,12 +255,10 @@ function parseMirrorProduct(text, fallbackAsin = "", sourceName = "Jina Mirror",
   const title = extractTitleFromMirror(lines);
   const bulletPoints = extractBulletPointsFromMirror(lines);
   const description = extractDescriptionFromMirror(lines, bulletPoints);
-  const sellingPrice = extractSellingPriceFromText(text);
+  const offerSignals = extractOfferSignalsFromText(text, lines);
   const numberOfReviews = extractReviewCountFromText(text);
   const rating = extractRatingFromText(text);
   const backendKeywords = extractBackendKeywordsFromText(text);
-  const buyBoxWinner = extractBuyBoxWinnerFromText(text, lines);
-  const dealStatus = extractDealStatusFromText(text, lines);
 
   return {
     sourceName,
@@ -267,11 +267,15 @@ function parseMirrorProduct(text, fallbackAsin = "", sourceName = "Jina Mirror",
     title,
     bulletPoints,
     productDescription: description,
-    sellingPrice,
+    sellingPrice: offerSignals.sellingPrice,
+    mrp: offerSignals.mrp,
+    discountPercent: offerSignals.discountPercent,
     numberOfReviews,
     rating,
-    buyBoxWinner,
-    dealStatus,
+    availabilityStatus: offerSignals.availabilityStatus,
+    buyBoxAvailable: offerSignals.buyBoxAvailable,
+    buyBoxWinner: offerSignals.buyBoxWinner,
+    dealStatus: offerSignals.dealStatus,
     backendKeywords,
   };
 }
@@ -763,5 +767,603 @@ function decodeHtml(value) {
     .replace(/&#39;/g, "'")
     .replace(/&apos;/g, "'")
     .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">");
+    .replace(/&gt;/g, ">")
+    .replace(/&nbsp;/g, " ");
+}
+
+function extractOfferSignalsFromHtml(html) {
+  const text = cleanText(html);
+  const availabilityStatus = extractAvailabilityStatusFromHtml(html, text);
+  const buyBoxAvailable = hasBuyBoxControlsHtml(html, text) && !isUnavailableStatus(availabilityStatus);
+  const sellingPrice = extractSellingPriceFromHtml(html, text);
+  const mrp = extractMrpFromHtml(html, text, sellingPrice);
+  const discountPercent = extractDiscountPercentFromHtml(html, text, sellingPrice, mrp);
+  const buyBoxWinner = extractBuyBoxWinnerFromHtml(html, text, buyBoxAvailable, availabilityStatus);
+  const dealStatus = extractDealStatusFromHtml(html, text, sellingPrice, mrp, discountPercent);
+
+  return {
+    availabilityStatus,
+    buyBoxAvailable,
+    sellingPrice,
+    mrp,
+    discountPercent,
+    buyBoxWinner,
+    dealStatus,
+  };
+}
+
+function extractOfferSignalsFromText(text, lines = []) {
+  const textBlock = [String(text || ""), ...(lines || [])].join("\n");
+  const availabilityStatus = extractAvailabilityStatusFromText(textBlock, lines);
+  const buyBoxAvailable = hasBuyBoxControlsText(textBlock, lines) && !isUnavailableStatus(availabilityStatus);
+  const sellingPrice = extractSellingPriceFromText(textBlock);
+  const mrp = extractMrpFromText(textBlock, lines, sellingPrice);
+  const discountPercent = extractDiscountPercentFromText(textBlock, lines, sellingPrice, mrp);
+  const buyBoxWinner = extractBuyBoxWinnerFromText(textBlock, lines, buyBoxAvailable, availabilityStatus);
+  const dealStatus = extractDealStatusFromText(textBlock, lines, sellingPrice, mrp, discountPercent);
+
+  return {
+    availabilityStatus,
+    buyBoxAvailable,
+    sellingPrice,
+    mrp,
+    discountPercent,
+    buyBoxWinner,
+    dealStatus,
+  };
+}
+
+function extractSellingPriceFromHtml(html, text = "") {
+  const wholeFractionPatterns = [
+    /<span[^>]*class=["'][^"']*a-price-whole[^"']*["'][^>]*>([\s\S]*?)<\/span>\s*<span[^>]*class=["'][^"']*a-price-fraction[^"']*["'][^>]*>([\s\S]*?)<\/span>/i,
+    /"priceAmount"\s*:\s*"?([0-9][\d,]*)"?\s*,\s*"priceFraction"\s*:\s*"?(\d{2})"?/i,
+  ];
+
+  for (const pattern of wholeFractionPatterns) {
+    const match = html.match(pattern);
+    if (!match?.[1] || !match?.[2]) {
+      continue;
+    }
+
+    const combined = normalizePriceString(`${cleanText(match[1])}.${cleanText(match[2])}`, detectCurrencyFromContext(html, text));
+    if (combined) {
+      return combined;
+    }
+  }
+
+  const snippets = collectContextSnippets(html, [
+    "priceToPay",
+    "corePriceDisplay_desktop_feature_div",
+    "corePrice_feature_div",
+    "apex_desktop",
+    "tp_price_block_total_price_ww",
+    "priceblock_dealprice",
+    "priceblock_saleprice",
+    "priceblock_ourprice",
+    "price_inside_buybox",
+    "desktop_buybox",
+    "exports_desktop_qualifiedbuybox",
+    "buybox",
+    "a-price",
+    "a-offscreen",
+    "offer-price",
+  ]);
+
+  for (const snippet of snippets) {
+    const candidate = extractFirstPriceCandidate(snippet, detectCurrencyFromContext(snippet, text));
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return extractSellingPriceFromText(text || html);
+}
+
+function extractMrpFromHtml(html, text = "", sellingPrice = "") {
+  const patterns = [
+    /M\.?\s*R\.?\s*P\.?\s*[:\-]?\s*([^<\n]+)/i,
+    /List Price\s*[:\-]?\s*([^<\n]+)/i,
+    /Was\s*[:\-]?\s*([^<\n]+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern) || text.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const candidate = extractFirstPriceCandidate(match[1], detectCurrencyFromContext(match[1], text));
+    if (candidate && candidate !== sellingPrice) {
+      return candidate;
+    }
+  }
+
+  const snippets = collectContextSnippets(html, [
+    "basisPrice",
+    "priceBlockStrikePriceString",
+    "listPrice",
+    "a-text-price",
+    "priceBlockSavingsString",
+    "savingsPercentage",
+    "mrp",
+  ]);
+
+  for (const snippet of snippets) {
+    const candidates = extractPriceCandidates(snippet, detectCurrencyFromContext(snippet, text));
+    const candidate = candidates.find((price) => price && price !== sellingPrice);
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return extractMrpFromText(text || html, [], sellingPrice);
+}
+
+function extractDiscountPercentFromHtml(html, text = "", sellingPrice = "", mrp = "") {
+  const directPatterns = [
+    /(\d{1,3})%\s*off/i,
+    /Save\s+(\d{1,3})%/i,
+    /Savings?\s*[:\-]?\s*(\d{1,3})%/i,
+  ];
+
+  for (const pattern of directPatterns) {
+    const match = html.match(pattern) || text.match(pattern);
+    if (match?.[1]) {
+      return `${match[1]}%`;
+    }
+  }
+
+  return calculateDiscountPercent(sellingPrice, mrp);
+}
+
+function extractSellingPriceFromText(text) {
+  const currencyHint = detectCurrencyFromContext(text);
+  const patterns = [
+    /(?:price to pay|deal price|sale price|current price|price)\s*[:\-]?\s*([^\n]+)/i,
+    /(?:our price|buy box price|offer price)\s*[:\-]?\s*([^\n]+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = String(text || "").match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const candidate = extractFirstPriceCandidate(match[1], currencyHint);
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return extractFirstPriceCandidate(String(text || ""), currencyHint);
+}
+
+function extractMrpFromText(text, lines = [], sellingPrice = "") {
+  const textBlock = [String(text || ""), ...(lines || [])].join("\n");
+  const currencyHint = detectCurrencyFromContext(textBlock);
+  const patterns = [
+    /M\.?\s*R\.?\s*P\.?\s*[:\-]?\s*([^\n]+)/i,
+    /List Price\s*[:\-]?\s*([^\n]+)/i,
+    /Was\s*[:\-]?\s*([^\n]+)/i,
+    /Strike(?:through)? Price\s*[:\-]?\s*([^\n]+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = textBlock.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const candidate = extractFirstPriceCandidate(match[1], currencyHint);
+    if (candidate && candidate !== sellingPrice) {
+      return candidate;
+    }
+  }
+
+  const candidates = extractPriceCandidates(textBlock, currencyHint);
+  return candidates.find((price) => price && price !== sellingPrice) || "";
+}
+
+function extractDiscountPercentFromText(text, lines = [], sellingPrice = "", mrp = "") {
+  const textBlock = [String(text || ""), ...(lines || [])].join("\n");
+  const patterns = [
+    /(\d{1,3})%\s*off/i,
+    /Save\s+(\d{1,3})%/i,
+    /Savings?\s*[:\-]?\s*(\d{1,3})%/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = textBlock.match(pattern);
+    if (match?.[1]) {
+      return `${match[1]}%`;
+    }
+  }
+
+  return calculateDiscountPercent(sellingPrice, mrp);
+}
+
+function extractBuyBoxWinnerFromHtml(html, text = "", buyBoxAvailable = false, availabilityStatus = "") {
+  const patterns = [
+    /<div[^>]*id=["']merchantInfoFeature_feature_div["'][^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]*id=["']merchant-info["'][^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]*id=["']shipsFromSoldBy_feature_div["'][^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]*id=["']tabular-buybox["'][^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]*id=["']desktop_buybox["'][^>]*>([\s\S]*?)<\/div>/i,
+    /<span[^>]*id=["']sellerProfileTriggerId["'][^>]*>([\s\S]*?)<\/span>/i,
+    /<a[^>]*id=["']sellerProfileTriggerId["'][^>]*>([\s\S]*?)<\/a>/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const seller = extractSellerName(match[1]);
+    if (seller) {
+      return seller;
+    }
+  }
+
+  const snippets = [
+    ...collectContextSnippets(html, [
+      "merchantInfoFeature_feature_div",
+      "merchant-info",
+      "shipsFromSoldBy_feature_div",
+      "tabular-buybox",
+      "desktop_buybox",
+      "exports_desktop_qualifiedbuybox",
+      "buybox",
+      "sellerProfileTriggerId",
+      "add-to-cart-button",
+      "buy-now-button",
+    ]),
+    text,
+  ];
+
+  for (const snippet of snippets) {
+    const seller = extractSellerName(snippet);
+    if (seller) {
+      return seller;
+    }
+  }
+
+  if (buyBoxAvailable && !isUnavailableStatus(availabilityStatus)) {
+    const fallback = extractSellerName(text);
+    if (fallback) {
+      return fallback;
+    }
+  }
+
+  return "";
+}
+
+function extractDealStatusFromHtml(html, text = "", sellingPrice = "", mrp = "", discountPercent = "") {
+  return extractDealStatusFromText(text || cleanText(html), [], sellingPrice, mrp, discountPercent);
+}
+
+function extractBuyBoxWinnerFromText(text, lines = [], buyBoxAvailable = false, availabilityStatus = "") {
+  const textBlock = [String(text || ""), ...(lines || [])].join("\n");
+  const seller = extractSellerName(textBlock);
+  if (seller) {
+    return seller;
+  }
+
+  if (buyBoxAvailable && !isUnavailableStatus(availabilityStatus)) {
+    const fallback = extractSellerName(lines.join(" "));
+    if (fallback) {
+      return fallback;
+    }
+  }
+
+  return "";
+}
+
+function extractDealStatusFromText(text, lines = [], sellingPrice = "", mrp = "", discountPercent = "") {
+  const textBlock = [String(text || ""), ...(lines || [])].join("\n");
+  const dealPatterns = [
+    /limited time deal[:\s-]*([^\n.]+)/i,
+    /deal of the day[:\s-]*([^\n.]+)/i,
+    /lightning deal[:\s-]*([^\n.]+)/i,
+    /coupon[:\s-]*([^\n.]+)/i,
+    /(save\s+[₹$€£]?\s?[\d,.]+[^\n.]*)/i,
+    /((?:extra|instant)\s+\d+%[^\n.]*(?:off|discount))/i,
+    /(\d+%\s+off[^\n.]*)/i,
+  ];
+
+  for (const pattern of dealPatterns) {
+    const match = textBlock.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const dealText = cleanText(match[1]).replace(/\.$/, "").trim();
+    if (dealText && !looksLikeNoise(dealText)) {
+      return `Active deal detected: ${dealText}`;
+    }
+  }
+
+  if (discountPercent && sellingPrice && mrp) {
+    return `Discount detected: ${discountPercent} off`;
+  }
+
+  return "";
+}
+
+function extractSellerName(value) {
+  const normalized = cleanText(value);
+  const patterns = [
+    /ships from\s+amazon\s+sold by\s+([^|]+?)(?:\s+(?:returns|payment|secure transaction|add to cart|buy now|details|quantity)\b|$)/i,
+    /ships from\s*&?\s*sold by\s+([^|]+?)(?:\s+(?:returns|payment|secure transaction|add to cart|buy now|details|quantity)\b|$)/i,
+    /dispatches from\s*&?\s*sold by\s+([^|]+?)(?:\s+(?:returns|payment|secure transaction|add to cart|buy now|details|quantity)\b|$)/i,
+    /sold by\s+([^|]+?)(?:\s+(?:returns|payment|secure transaction|ships from|dispatches from|add to cart|buy now|details|quantity)\b|$)/i,
+    /seller\s*:\s*([^|]+?)(?:\s+(?:fulfilled|ships from|dispatches from)\b|$)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const seller = normalizeSellerName(match[1]);
+    if (isUsableSellerName(seller)) {
+      return seller;
+    }
+  }
+
+  if (/ships from\s+amazon\s+sold by\s+amazon/i.test(normalized) || /sold by\s+amazon/i.test(normalized)) {
+    return "Amazon";
+  }
+
+  return "";
+}
+
+function isUsableSellerName(value) {
+  const seller = normalizeSellerName(value);
+
+  if (!seller || seller.length < 2 || seller.length > 120) {
+    return false;
+  }
+
+  const normalized = seller.toLowerCase();
+  if (
+    looksLikeNoise(seller) ||
+    normalized.includes("buy now") ||
+    normalized.includes("add to cart") ||
+    normalized.includes("details") ||
+    normalized.includes("secure transaction") ||
+    normalized.includes("returns")
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function normalizeSellerName(value) {
+  const seller = cleanText(value)
+    .replace(/^(ships from\s*&?\s*)?sold by\s+/i, "")
+    .replace(/^(dispatches from\s*&?\s*)?sold by\s+/i, "")
+    .replace(/^(seller\s*:\s*)/i, "")
+    .replace(/\b(?:returns|payment|secure transaction|details|quantity|add to cart|buy now)\b.*$/i, "")
+    .replace(/\.$/, "")
+    .trim();
+
+  if (/^amazon(?:[\s.].*)?$/i.test(seller) || /ships from amazon sold by amazon/i.test(seller)) {
+    return "Amazon";
+  }
+
+  return seller;
+}
+
+function hasBuyBoxControlsHtml(html, text = "") {
+  const raw = String(html || "").toLowerCase();
+  const normalizedText = String(text || "").toLowerCase();
+  return (
+    /add-to-cart-button|submit\.add-to-cart|buy-now-button|desktop_buybox|exports_desktop_qualifiedbuybox|buybox|checkoutnow/i.test(raw) ||
+    /\badd to cart\b|\bbuy now\b/.test(normalizedText)
+  );
+}
+
+function hasBuyBoxControlsText(text, lines = []) {
+  const textBlock = [String(text || ""), ...(lines || [])].join("\n").toLowerCase();
+  return /\badd to cart\b|\bbuy now\b/.test(textBlock);
+}
+
+function extractAvailabilityStatusFromHtml(html, text = "") {
+  return extractAvailabilityStatusFromText(text || cleanText(html));
+}
+
+function extractAvailabilityStatusFromText(text, lines = []) {
+  const textBlock = [String(text || ""), ...(lines || [])].join("\n");
+  const patterns = [
+    /only\s+\d+\s+left in stock/i,
+    /in stock/i,
+    /currently unavailable/i,
+    /temporarily out of stock/i,
+    /out of stock/i,
+    /unavailable/i,
+    /available to ship/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = textBlock.match(pattern);
+    if (match?.[0]) {
+      return cleanText(match[0]);
+    }
+  }
+
+  return "";
+}
+
+function isUnavailableStatus(value) {
+  return /out of stock|currently unavailable|temporarily out of stock|unavailable/i.test(String(value || ""));
+}
+
+function scoreProductCompleteness(product) {
+  let score = 0;
+
+  if (product.title) {
+    score += 10;
+  }
+
+  score += Math.min((product.bulletPoints || []).length, 5);
+
+  if (product.productDescription) {
+    score += 3;
+  }
+
+  if (product.sellingPrice) {
+    score += 3;
+  }
+
+  if (product.mrp) {
+    score += 1;
+  }
+
+  if (product.discountPercent) {
+    score += 1;
+  }
+
+  if (product.numberOfReviews) {
+    score += 1;
+  }
+
+  if (product.rating) {
+    score += 1;
+  }
+
+  if (product.buyBoxWinner) {
+    score += 3;
+  }
+
+  if (product.dealStatus) {
+    score += 2;
+  }
+
+  if ((product.backendKeywords || []).length) {
+    score += 1;
+  }
+
+  return score;
+}
+
+function collectContextSnippets(value, tokens, radius = 1000) {
+  const source = String(value || "");
+  const normalized = source.toLowerCase();
+  const snippets = [];
+
+  for (const token of tokens) {
+    const lookup = String(token || "").toLowerCase();
+    let startIndex = normalized.indexOf(lookup);
+
+    while (startIndex !== -1) {
+      const start = Math.max(0, startIndex - radius);
+      const end = Math.min(source.length, startIndex + lookup.length + radius);
+      snippets.push(source.slice(start, end));
+      startIndex = normalized.indexOf(lookup, startIndex + lookup.length);
+
+      if (snippets.length >= 24) {
+        return snippets;
+      }
+    }
+  }
+
+  return snippets;
+}
+
+function detectCurrencyFromContext(...sources) {
+  const combined = sources.join(" ");
+  if (/₹|â‚¹|rs\.?|inr/i.test(combined)) {
+    return "₹";
+  }
+
+  if (/£|Â£|gbp/i.test(combined)) {
+    return "£";
+  }
+
+  if (/€|â‚¬|eur/i.test(combined)) {
+    return "€";
+  }
+
+  if (/cad\$|c\$|ca\$/i.test(combined)) {
+    return "C$";
+  }
+
+  if (/aud\$|a\$/i.test(combined)) {
+    return "A$";
+  }
+
+  if (/pln|zł/i.test(combined)) {
+    return "zł";
+  }
+
+  if (/\$/i.test(combined)) {
+    return "$";
+  }
+
+  return "";
+}
+
+function normalizePriceString(value, currencyHint = "") {
+  const normalized = decodeHtml(String(value || ""))
+    .replace(/â‚¹/g, "₹")
+    .replace(/Â£/g, "£")
+    .replace(/â‚¬/g, "€")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const directMatch = normalized.match(/(?:₹|Rs\.?|INR|\$|US\$|USD|£|€|EUR|C\$|CAD\$|A\$|AUD\$|PLN|zł)\s?\d[\d,]*(?:\.\d{1,2})?/i);
+  const numericMatch = normalized.match(/\d[\d,]*(?:\.\d{1,2})?/);
+  const base = directMatch?.[0] || (numericMatch?.[0] && currencyHint ? `${currencyHint}${numericMatch[0]}` : "");
+
+  if (!base) {
+    return "";
+  }
+
+  return base
+    .replace(/Rs\.?|INR/i, "₹")
+    .replace(/US\$|USD/i, "$")
+    .replace(/CAD\$/i, "C$")
+    .replace(/AUD\$/i, "A$")
+    .replace(/EUR/i, "€")
+    .replace(/\s+/g, "");
+}
+
+function extractPriceCandidates(value, currencyHint = "") {
+  const source = decodeHtml(String(value || ""))
+    .replace(/â‚¹/g, "₹")
+    .replace(/Â£/g, "£")
+    .replace(/â‚¬/g, "€");
+  const matches = [...source.matchAll(/(?:₹|Rs\.?|INR|\$|US\$|USD|£|€|EUR|C\$|CAD\$|A\$|AUD\$|PLN|zł)?\s?\d[\d,]*(?:\.\d{1,2})?/gi)]
+    .map((match) => normalizePriceString(match[0], currencyHint))
+    .filter(Boolean);
+
+  return [...new Set(matches)];
+}
+
+function extractFirstPriceCandidate(value, currencyHint = "") {
+  return extractPriceCandidates(value, currencyHint)[0] || "";
+}
+
+function parsePriceAmount(value) {
+  const normalized = String(value || "").replace(/[^\d.,]/g, "");
+  if (!normalized) {
+    return NaN;
+  }
+
+  return Number.parseFloat(normalized.replace(/,/g, ""));
+}
+
+function calculateDiscountPercent(sellingPrice, mrp) {
+  const selling = parsePriceAmount(sellingPrice);
+  const listPrice = parsePriceAmount(mrp);
+
+  if (!Number.isFinite(selling) || !Number.isFinite(listPrice) || listPrice <= selling || listPrice <= 0) {
+    return "";
+  }
+
+  const percent = Math.round(((listPrice - selling) / listPrice) * 100);
+  return percent > 0 ? `${percent}%` : "";
 }

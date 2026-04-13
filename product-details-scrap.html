@@ -19,7 +19,7 @@
         <h1>Fetch complete Amazon product intelligence from ASINs.</h1>
         <p class="hero-copy">
           Paste one or many ASINs, queue them automatically, and extract structured product details like title, price,
-          reviews, rating, Buy Box winner, and active deal detection.
+          MRP, discount, reviews, rating, Buy Box winner, and active deal detection.
         </p>
       </section>
 
@@ -91,7 +91,9 @@ https://www.amazon.in/dp/B0DRPC49DP"
                   <th>ASIN</th>
                   <th>Status</th>
                   <th>Product Title</th>
-                  <th>Price</th>
+                  <th>Selling Price</th>
+                  <th>MRP</th>
+                  <th>Discount %</th>
                   <th>Rating</th>
                   <th>Reviews</th>
                   <th>Buy Box</th>
@@ -100,7 +102,7 @@ https://www.amazon.in/dp/B0DRPC49DP"
               </thead>
               <tbody id="scrap-results-body">
                 <tr class="empty-row">
-                  <td colspan="8">
+                  <td colspan="10">
                     Add ASINs and click <strong>Fetch Product Details</strong>.
                   </td>
                 </tr>
@@ -120,7 +122,7 @@ https://www.amazon.in/dp/B0DRPC49DP"
 
           <section class="scrap-card-grid" id="scrap-card-grid">
             <article class="scrap-empty-card">
-              Product cards with price, reviews, rating, Buy Box winner, and deal status will appear here.
+              Product cards with selling price, MRP, discount, reviews, rating, Buy Box winner, and deal status will appear here.
             </article>
           </section>
         </section>

@@ -20,7 +20,7 @@ const SCRAP_SAMPLE_ASINS = [
 ].join("\n");
 
 const SCRAP_CONCURRENCY = 3;
-const SCRAP_RETRY_LIMIT = 2;
+const SCRAP_RETRY_LIMIT = 3;
 const SCRAP_MARKETPLACE_MAP = {
   IN: "https://www.amazon.in/dp/",
   US: "https://www.amazon.com/dp/",
@@ -133,8 +133,12 @@ async function handleScrapSubmit(event) {
     sourceName: "",
     title: "",
     sellingPrice: "",
+    mrp: "",
+    discountPercent: "",
     numberOfReviews: "",
     rating: "",
+    availabilityStatus: "",
+    buyBoxAvailable: false,
     buyBoxWinner: "",
     dealStatus: "",
     errorMessage: item.valid ? "" : "Invalid ASIN or Amazon URL.",
@@ -203,8 +207,12 @@ async function fetchScrapItem(item) {
         sourceName: data.sourceName || "Scrape API",
         title: data.title || "",
         sellingPrice: data.sellingPrice || "",
+        mrp: data.mrp || "",
+        discountPercent: data.discountPercent || "",
         numberOfReviews: data.numberOfReviews || "",
         rating: data.rating || "",
+        availabilityStatus: data.availabilityStatus || "",
+        buyBoxAvailable: Boolean(data.buyBoxAvailable),
         buyBoxWinner: data.buyBoxWinner || "",
         dealStatus: data.dealStatus || "",
         errorMessage: "",
@@ -350,9 +358,11 @@ function renderScrapResults(rows) {
           <td><span class="scrap-status-badge scrap-status-${escapeHtml(row.status)}">${escapeHtml(capitalize(row.status))}</span></td>
           <td>${escapeHtml(row.title || row.errorMessage || "Waiting for data")}</td>
           <td>${escapeHtml(row.sellingPrice || "-")}</td>
+          <td>${escapeHtml(row.mrp || "-")}</td>
+          <td>${escapeHtml(row.discountPercent || "-")}</td>
           <td>${escapeHtml(row.rating || "-")}</td>
           <td>${escapeHtml(row.numberOfReviews || "-")}</td>
-          <td>${escapeHtml(row.buyBoxWinner || "Buy Box not available")}</td>
+          <td>${escapeHtml(getBuyBoxDisplayValue(row))}</td>
           <td>${escapeHtml(row.dealStatus || "No active deal detected")}</td>
         </tr>
       `
@@ -383,7 +393,9 @@ function renderScrapResults(rows) {
           </div>
           <div class="scrap-meta-grid">
             <article><strong>Source</strong><span>${escapeHtml(row.sourceName || "-")}</span></article>
-            <article><strong>Price</strong><span>${escapeHtml(row.sellingPrice || "-")}</span></article>
+            <article><strong>Selling Price</strong><span>${escapeHtml(row.sellingPrice || "-")}</span></article>
+            <article><strong>MRP</strong><span>${escapeHtml(row.mrp || "-")}</span></article>
+            <article><strong>Discount</strong><span>${escapeHtml(row.discountPercent || "-")}</span></article>
             <article><strong>Rating</strong><span>${escapeHtml(row.rating || "-")}</span></article>
             <article><strong>Reviews</strong><span>${escapeHtml(row.numberOfReviews || "-")}</span></article>
           </div>
@@ -393,7 +405,11 @@ function renderScrapResults(rows) {
           </div>
           <div class="scrap-section">
             <strong>Buy Box Winner</strong>
-            <p>${escapeHtml(row.buyBoxWinner || "Buy Box not available")}</p>
+            <p>${escapeHtml(getBuyBoxDisplayValue(row))}</p>
+          </div>
+          <div class="scrap-section">
+            <strong>Availability</strong>
+            <p>${escapeHtml(row.availabilityStatus || "Availability not clear")}</p>
           </div>
           <div class="scrap-section">
             <strong>Deal Detection</strong>
@@ -410,13 +426,13 @@ function renderScrapResults(rows) {
 function renderScrapEmptyState() {
   scrapResultsBody.innerHTML = `
     <tr class="empty-row">
-      <td colspan="8">Add ASINs and click <strong>Fetch Product Details</strong>.</td>
+      <td colspan="10">Add ASINs and click <strong>Fetch Product Details</strong>.</td>
     </tr>
   `;
   scrapSummaryCards.innerHTML = "";
   scrapCardGrid.innerHTML = `
     <article class="scrap-empty-card">
-      Product cards with price, reviews, rating, Buy Box winner, and deal status will appear here.
+      Product cards with selling price, MRP, discount, reviews, rating, Buy Box winner, and deal status will appear here.
     </article>
   `;
   scrapExportOutput.value = "";
@@ -444,9 +460,12 @@ function buildScrapCsv(rows) {
     "Product URL",
     "Product Title",
     "Selling Price",
+    "MRP",
+    "Discount %",
     "Number of Reviews",
     "Rating",
     "Buy Box Winner",
+    "Availability Status",
     "Deal Status",
     "Error Message",
   ];
@@ -460,9 +479,12 @@ function buildScrapCsv(rows) {
       row.url,
       row.title,
       row.sellingPrice,
+      row.mrp,
+      row.discountPercent,
       row.numberOfReviews,
       row.rating,
-      row.buyBoxWinner || "Buy Box not available",
+      getBuyBoxDisplayValue(row),
+      row.availabilityStatus || "",
       row.dealStatus || "No active deal detected",
       row.errorMessage,
     ]),
@@ -528,4 +550,20 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function getBuyBoxDisplayValue(row) {
+  if (row.buyBoxWinner) {
+    return row.buyBoxWinner;
+  }
+
+  if (row.buyBoxAvailable) {
+    return "Seller visible but not extracted";
+  }
+
+  if (/out of stock|currently unavailable|temporarily out of stock|unavailable/i.test(String(row.availabilityStatus || ""))) {
+    return "Buy Box not available";
+  }
+
+  return "Buy Box not available";
 }
