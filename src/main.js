@@ -472,6 +472,26 @@ const ASIN_DATABASE = {
       'Different buying intent from handkerchief products'
     ]
   },
+  'B0DRPC49DP': {
+    title: 'Rabitat ZYLO Insulated Water Bottle for School Kids 550ml',
+    highlights: [
+      'Steel water bottle for kids',
+      'School use bottle',
+      'Hot and cold up to 24 hours',
+      '550 ml insulated bottle',
+      'Different product category from handkerchief products'
+    ]
+  },
+  'B0FT3SGTM7': {
+    title: 'Brand Conquer Pink Kids Lunch Box Stainless Steel Insulated Tiffin 800 ml',
+    highlights: [
+      'Kids lunch box with spoon',
+      'Stainless steel insulated tiffin',
+      'Leak-resistant bento box',
+      '800 ml capacity',
+      'Different product category from handkerchief products'
+    ]
+  },
   'B0CWY4TKNW': {
     title: 'SPHINX Ribbed Pipe Ceramic Vase for Flowers, Pampas Grass, or Live Plants | Decorative Home & Office Centerpiece Gift',
     highlights: [
