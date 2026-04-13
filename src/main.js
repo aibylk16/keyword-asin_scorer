@@ -90,6 +90,38 @@ const ASIN_SAMPLE_DATA = {
   targets: ["B0F26CTJ96", "B0F269WYKG", "B0DGL17T32"].join("\n"),
 };
 
+const CATEGORY_KEYWORDS = {
+  kitchen: ["bottle", "flask", "thermos", "mug", "cup", "tiffin", "lunch", "box", "bento", "spoon", "plate", "container", "insulated", "kitchen"],
+  clothing: ["handkerchief", "hanky", "shirt", "dress", "jacket", "sock", "underwear", "hipster", "innerwear", "apparel", "clothing", "wear", "fabric"],
+  home_decor: ["throw", "blanket", "sofa", "bed", "decor", "living", "room", "curtain", "rug", "pillow", "cushion", "quilt", "vase", "textile"],
+  electronics: ["phone", "laptop", "tablet", "charger", "cable", "speaker", "headphone", "mouse", "keyboard", "electronics", "gadget"],
+  beauty: ["cream", "serum", "lotion", "cosmetic", "skincare", "beauty", "makeup"],
+  toys: ["toy", "kids", "children", "baby", "doll", "play"],
+  books: ["book", "novel", "paperback", "hardcover", "textbook"],
+  jewelry: ["necklace", "bracelet", "ring", "earring", "pendant", "jewelry"],
+  furniture: ["chair", "table", "sofa", "bed", "cabinet", "desk", "furniture"],
+  automotive: ["car", "bike", "motorcycle", "vehicle", "automobile", "engine"],
+};
+
+const PRODUCT_TYPE_RULES = [
+  { type: "water bottle", category: "kitchen", phrases: ["water bottle"], tokens: ["bottle", "flask", "thermos"] },
+  { type: "lunch box", category: "kitchen", phrases: ["lunch box", "bento box"], tokens: ["lunch", "box", "tiffin", "bento"] },
+  { type: "throw blanket", category: "home_decor", phrases: ["throw blanket"], tokens: ["throw", "blanket", "quilt"] },
+  { type: "handkerchief", category: "clothing", phrases: ["cotton handkerchief"], tokens: ["handkerchief", "hanky"] },
+  { type: "underwear", category: "clothing", phrases: ["cotton hipster"], tokens: ["underwear", "hipster", "innerwear", "panty"] },
+  { type: "vase", category: "home_decor", phrases: ["ceramic vase"], tokens: ["vase", "planter"] },
+  { type: "speaker", category: "electronics", phrases: ["bluetooth speaker"], tokens: ["speaker"] },
+  { type: "charger", category: "electronics", phrases: ["fast charger"], tokens: ["charger", "adapter"] },
+  { type: "shirt", category: "clothing", phrases: ["cotton shirt"], tokens: ["shirt", "tshirt", "tee"] },
+  { type: "bag", category: "clothing", phrases: ["school bag"], tokens: ["bag", "backpack", "purse"] },
+];
+
+const MATERIAL_SIGNALS = ["cotton", "steel", "stainless", "ceramic", "glass", "wood", "plastic", "bpa free", "metal", "silk", "leather"];
+const AUDIENCE_SIGNALS = ["women", "men", "kids", "children", "baby", "girls", "boys", "school"];
+const USE_CASE_SIGNALS = ["daily use", "travel", "gym", "office", "school", "bed", "sofa", "living room", "home decor", "kitchen", "personal use"];
+const FEATURE_SIGNALS = ["insulated", "leakproof", "woven", "floral", "pack", "soft", "absorbent", "decorative", "reusable", "hot cold"];
+const VARIANT_SIGNALS = ["white", "black", "blue", "pink", "red", "green", "grey", "gray", "beige", "brown", "navy", "gold", "silver"];
+
 initializeApp();
 
 function initializeApp() {
@@ -879,20 +911,161 @@ function buildProductContext(title, description) {
   };
 }
 
+function hasSignalMatch(signal, normalizedText, tokenSet) {
+  const normalizedSignal = normalizeText(signal);
+
+  if (!normalizedSignal) {
+    return false;
+  }
+
+  if (normalizedSignal.includes(" ")) {
+    return normalizedText.includes(normalizedSignal);
+  }
+
+  return tokenSet.has(stemToken(normalizedSignal));
+}
+
+function collectSignalMatches(normalizedText, tokenSet, signals) {
+  return signals.filter((signal) => hasSignalMatch(signal, normalizedText, tokenSet));
+}
+
+function detectCategoryFromTextData(normalizedText, titleTokens, descriptionTokens) {
+  const titleSet = new Set(titleTokens);
+  const combinedSet = new Set([...titleTokens, ...descriptionTokens]);
+  const scores = {};
+
+  for (const [category, signals] of Object.entries(CATEGORY_KEYWORDS)) {
+    let score = 0;
+
+    for (const signal of signals) {
+      const normalizedSignal = normalizeText(signal);
+      const titleHit = normalizedSignal.includes(" ")
+        ? normalizedText.includes(normalizedSignal) && titleTokens.some((token) => normalizedSignal.includes(token))
+        : titleSet.has(stemToken(normalizedSignal));
+      const combinedHit = hasSignalMatch(signal, normalizedText, combinedSet);
+
+      if (titleHit) {
+        score += 3;
+      } else if (combinedHit) {
+        score += 1;
+      }
+    }
+
+    if (score > 0) {
+      scores[category] = score;
+    }
+  }
+
+  if (!Object.keys(scores).length) {
+    return null;
+  }
+
+  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+  if (sorted.length > 1 && sorted[0][1] === sorted[1][1]) {
+    return null;
+  }
+
+  return sorted[0][0];
+}
+
+function detectPrimaryProductType(context) {
+  const titleSet = new Set(context.titleTokens);
+  const combinedSet = new Set([...context.titleTokens, ...context.descriptionTokens]);
+  let bestRule = null;
+  let bestScore = 0;
+
+  for (const rule of PRODUCT_TYPE_RULES) {
+    let score = 0;
+
+    for (const phrase of rule.phrases) {
+      const normalizedPhrase = normalizeText(phrase);
+      if (context.normalizedTitle.includes(normalizedPhrase)) {
+        score += 6;
+      } else if (context.combined.includes(normalizedPhrase)) {
+        score += 3;
+      }
+    }
+
+    for (const token of rule.tokens) {
+      const normalizedToken = stemToken(normalizeText(token));
+      if (titleSet.has(normalizedToken)) {
+        score += 3;
+      } else if (combinedSet.has(normalizedToken)) {
+        score += 1;
+      }
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestRule = rule;
+    }
+  }
+
+  return bestScore > 0 ? bestRule : null;
+}
+
+function collectSizeIndicators(value) {
+  const matches = String(value || "")
+    .toLowerCase()
+    .match(/\b\d+(?:\.\d+)?\s?(?:ml|l|litre|liter|inch|inches|cm|mm|oz|pack)\b|\b\d+\s*x\s*\d+\b/g);
+
+  return matches ? [...new Set(matches.map((match) => match.replace(/\s+/g, "")))] : [];
+}
+
+function overlapItems(left, right) {
+  const rightSet = new Set(right || []);
+  return (left || []).filter((item) => rightSet.has(item));
+}
+
+function jaccardSimilarity(left, right) {
+  const leftSet = new Set(left || []);
+  const rightSet = new Set(right || []);
+
+  if (!leftSet.size || !rightSet.size) {
+    return 0;
+  }
+
+  const intersection = [...leftSet].filter((item) => rightSet.has(item)).length;
+  const union = new Set([...leftSet, ...rightSet]).size;
+  return union ? intersection / union : 0;
+}
+
+function buildProductSignals(title, description, context = buildProductContext(title, description)) {
+  const combinedText = `${context.normalizedTitle} ${context.normalizedDescription}`.trim();
+  const combinedSet = new Set([...context.titleTokens, ...context.descriptionTokens]);
+  const primaryTypeRule = detectPrimaryProductType(context);
+
+  return {
+    brand: extractBrandToken(title),
+    category: detectCategoryFromTextData(combinedText, context.titleTokens, context.descriptionTokens),
+    primaryType: primaryTypeRule?.type || "",
+    primaryTypeCategory: primaryTypeRule?.category || "",
+    materials: collectSignalMatches(combinedText, combinedSet, MATERIAL_SIGNALS),
+    audiences: collectSignalMatches(combinedText, combinedSet, AUDIENCE_SIGNALS),
+    useCases: collectSignalMatches(combinedText, combinedSet, USE_CASE_SIGNALS),
+    features: collectSignalMatches(combinedText, combinedSet, FEATURE_SIGNALS),
+    variants: collectSignalMatches(combinedText, combinedSet, VARIANT_SIGNALS),
+    sizeIndicators: collectSizeIndicators(`${title} ${description}`),
+  };
+}
+
 function scoreKeywords({ title, description, keywords, fetchedContext: liveContext }) {
   const mergedTitle = title || liveContext?.title || "";
   const mergedDescription = [description, ...(liveContext?.highlights || [])]
     .filter(Boolean)
     .join(" ");
   const context = buildProductContext(mergedTitle, mergedDescription);
+  const productSignals = buildProductSignals(mergedTitle, mergedDescription, context);
 
-  return keywords.map((keyword) => scoreSingleKeyword(keyword, context));
+  return keywords.map((keyword) => scoreSingleKeyword(keyword, context, productSignals));
 }
 
-function scoreSingleKeyword(keyword, context) {
+function scoreSingleKeyword(keyword, context, productSignals) {
   const normalizedKeyword = normalizeText(keyword);
   const keywordTokens = tokenize(keyword);
   const uniqueKeywordTokens = [...new Set(keywordTokens)];
+  const keywordContext = buildProductContext(keyword, "");
+  const keywordSignals = buildProductSignals(keyword, "", keywordContext);
 
   if (!normalizedKeyword) {
     return {
@@ -927,60 +1100,90 @@ function scoreSingleKeyword(keyword, context) {
   const matchRatio = uniqueKeywordTokens.length
     ? matchedTokens.length / uniqueKeywordTokens.length
     : 0;
+  const titleCoverage = uniqueKeywordTokens.length
+    ? titleMatchedTokens.length / uniqueKeywordTokens.length
+    : 0;
+  const comparableKeyword = normalizeComparableTitle(keyword);
+  const comparableTitle = normalizeComparableTitle(context.normalizedTitle);
+  const exactComparableMatch = comparableKeyword && comparableKeyword === comparableTitle;
+  const sameCategory =
+    Boolean(keywordSignals.category) &&
+    Boolean(productSignals.category) &&
+    keywordSignals.category === productSignals.category;
+  const categoryMismatch =
+    Boolean(keywordSignals.category) &&
+    Boolean(productSignals.category) &&
+    keywordSignals.category !== productSignals.category;
+  const samePrimaryType =
+    Boolean(keywordSignals.primaryType) &&
+    Boolean(productSignals.primaryType) &&
+    keywordSignals.primaryType === productSignals.primaryType;
+  const materialOverlap = overlapItems(keywordSignals.materials, productSignals.materials);
+  const audienceOverlap = overlapItems(keywordSignals.audiences, productSignals.audiences);
+  const useCaseOverlap = overlapItems(keywordSignals.useCases, productSignals.useCases);
+  const featureOverlap = overlapItems(keywordSignals.features, productSignals.features);
+  const sizeOverlap = overlapItems(keywordSignals.sizeIndicators, productSignals.sizeIndicators);
+  const signalOverlapCount =
+    materialOverlap.length +
+    audienceOverlap.length +
+    useCaseOverlap.length +
+    featureOverlap.length +
+    sizeOverlap.length;
 
   let score = 0;
   let reason = "No direct product connection detected.";
 
-  if (exactTitleMatch) {
+  if (categoryMismatch && !samePrimaryType) {
+    score = 0;
+    reason = "Keyword points to a different product category than the product.";
+  } else if (looksLikeDifferentProduct(normalizedKeyword, context) && !samePrimaryType) {
+    score = 0;
+    reason = "Keyword describes a different product type or buying intent.";
+  } else if (exactTitleMatch || exactComparableMatch) {
     score = 9;
     reason = "Exact product-title match, which is a core keyword fit.";
-  } else if (
-    titleContainsPhrase &&
-    uniqueKeywordTokens.length >= 2 &&
-    matchRatio === 1
-  ) {
+  } else if (samePrimaryType && titleContainsPhrase && matchRatio === 1 && uniqueKeywordTokens.length >= 2) {
     score = 9;
-    reason = "Exact phrase appears in the title and fully matches the product wording.";
-  } else if (
-    combinedContainsPhrase &&
-    matchRatio === 1 &&
-    titleMatchedTokens.length >= Math.max(1, uniqueKeywordTokens.length - 1)
-  ) {
+    reason = "Keyword matches the core product type and appears as a strong title phrase.";
+  } else if (samePrimaryType && (matchRatio === 1 || titleCoverage >= 0.67) && (signalOverlapCount >= 1 || combinedContainsPhrase)) {
     score = 8;
-    reason = "Strong phrase and token match tied closely to the product title.";
-  } else if (matchRatio === 1 && titleMatchedTokens.length >= 1) {
+    reason = "Keyword strongly matches the same product type with useful attribute overlap.";
+  } else if (samePrimaryType && (matchRatio >= 0.5 || signalOverlapCount >= 1 || descriptionContainsPhrase)) {
     score = 7;
-    reason = "All keyword terms match the product, with at least one core title term.";
-  } else if (matchRatio >= 0.75 && matchedTokens.length >= 2) {
+    reason = "Keyword matches the same product type but is more secondary than core.";
+  } else if (sameCategory && (matchRatio >= 0.5 || signalOverlapCount >= 2 || matchedTokens.length >= 2)) {
     score = 6;
-    reason = "Most keyword terms match the product, but the phrase is not core.";
-  } else if (descriptionContainsPhrase || (matchRatio >= 0.5 && matchedTokens.length >= 1)) {
+    reason = "Keyword is clearly related to the product category and useful for relevance.";
+  } else if (sameCategory && (matchedTokens.length >= 1 || signalOverlapCount >= 1 || descriptionContainsPhrase)) {
     score = 5;
-    reason = "Keyword has a partial or feature-level connection to the product details.";
-  } else if (titleMatchedTokens.length === 1 || matchedTokens.length === 1) {
+    reason = "Keyword has a partial feature or category connection, but it is broad.";
+  } else if (sameCategory) {
     score = 4;
-    reason = "Only one meaningful product term overlaps, so the connection is weak.";
-  } else if (sharesCategoryHint(normalizedKeyword, context)) {
+    reason = "Keyword stays in the same category, but the connection is weak.";
+  } else if (matchedTokens.length === 1 || signalOverlapCount === 1 || sharesCategoryHint(normalizedKeyword, context)) {
     score = 3;
-    reason = "Keyword looks loosely related to the same category, but not the product itself.";
+    reason = "Keyword has only a thin relation to the product and should be reviewed carefully.";
   } else if (hasSurfaceSimilarity(normalizedKeyword, context.combined)) {
     score = 2;
     reason = "There is only a marginal text-level similarity with the product details.";
+  } else if (uniqueKeywordTokens.length === 1 && matchedTokens.length === 0) {
+    score = 1;
+    reason = "Keyword is almost irrelevant to the product and lacks clear buying-intent overlap.";
   } else {
     score = 0;
     reason = "No meaningful connection found between this keyword and the product.";
   }
 
-  score = applyBoostsAndPenalties(score, {
+  return {
     keyword,
-    normalizedKeyword,
-    uniqueKeywordTokens,
-    matchedTokens,
-    titleMatchedTokens,
-    context,
-  });
-
-  return { keyword, score, reason: refineReason(score, reason, keyword, matchedTokens) };
+    score,
+    reason: refineReason(
+      score,
+      reason,
+      keyword,
+      [...new Set([...matchedTokens, ...materialOverlap, ...useCaseOverlap, ...featureOverlap])]
+    ),
+  };
 }
 
 function applyBoostsAndPenalties(score, details) {
@@ -1051,162 +1254,26 @@ function hasSurfaceSimilarity(keyword, combinedText) {
 }
 
 function detectProductCategory(context) {
-  const categoryKeywords = {
-    kitchen: ["bottle", "flask", "mug", "cup", "container", "tiffin", "lunch", "box", "plate", "spoon", "fork", "knife", "pan", "pot", "cookware", "utensil", "kitchen"],
-    clothing: ["shirt", "pant", "jeans", "dress", "shoe", "sandal", "boot", "sock", "jacket", "coat", "clothing", "apparel", "wear", "handkerchief", "hanky", "women", "women's"],
-    home_decor: ["throw", "blanket", "cotton", "textile", "home", "living", "room", "decor", "curtain", "rug", "pillow", "cushion", "bedspread", "quilt", "tapestry"],
-    electronics: ["phone", "laptop", "tablet", "charger", "cable", "speaker", "headphone", "mouse", "keyboard", "electronics", "gadget"],
-    beauty: ["cream", "serum", "lotion", "makeup", "cosmetic", "skincare", "beauty", "lipstick", "foundation"],
-    books: ["book", "novel", "paperback", "hardcover", "textbook", "magazine", "journal"],
-    toys: ["toy", "game", "puzzle", "play", "children", "kid", "baby", "doll", "action"],
-    furniture: ["furniture", "chair", "table", "sofa", "bed", "shelf", "cabinet", "desk", "drawer"],
-    jewelry: ["jewelry", "necklace", "bracelet", "ring", "earring", "accessory", "pendant", "chain"],
-    automotive: ["car", "bike", "motorcycle", "vehicle", "automobile", "tire", "wheel", "engine", "part"]
-  };
-
-  const allTokens = [...context.titleTokens, ...context.descriptionTokens];
-  const categoryScores = {};
-
-  for (const [category, keywords] of Object.entries(categoryKeywords)) {
-    let score = 0;
-    for (const keyword of keywords) {
-      if (allTokens.includes(keyword)) {
-        score += 1;
-      }
-    }
-    if (score > 0) {
-      categoryScores[category] = score;
-    }
-  }
-
-  // Enhanced brand detection for better categorization
-  const combinedText = context.combined.toLowerCase();
-  
-  // Brand-specific category hints
-  if (combinedText.includes("caruso") && combinedText.includes("italy")) {
-    // Caruso Italy is primarily known for clothing accessories like handkerchiefs
-    if (allTokens.some(token => ["handkerchief", "hanky", "cotton", "women", "women's"].includes(token))) {
-      categoryScores.clothing = (categoryScores.clothing || 0) + 3; // Strong boost for Caruso Italy clothing
-    }
-  }
-
-  // Special handling for SASHAA WORLD products
-  if (combinedText.includes("sashaa") && combinedText.includes("world")) {
-    if (allTokens.some(token => ["throw", "blanket", "cotton", "home", "living", "room"].includes(token))) {
-      categoryScores.home_decor = (categoryScores.home_decor || 0) + 3; // Strong boost for SASHAA WORLD home textiles
-    }
-  }
-
-  // Return the category with the highest score, or null if no clear category
-  if (Object.keys(categoryScores).length === 0) {
-    return null;
-  }
-
-  const maxScore = Math.max(...Object.values(categoryScores));
-  const bestCategories = Object.entries(categoryScores)
-    .filter(([_, score]) => score === maxScore)
-    .map(([category, _]) => category);
-
-  return bestCategories.length === 1 ? bestCategories[0] : null;
+  return detectCategoryFromTextData(
+    context.combined,
+    context.titleTokens,
+    context.descriptionTokens
+  );
 }
 
 function looksLikeDifferentProduct(keyword, context) {
-  const conflictingGroups = [
-    ["bottle", "lunch box", "plate", "spoon", "tiffin", "container"],
-    ["shoe", "shirt", "pant", "watch", "clothing", "apparel"],
-    ["charger", "speaker", "headphone", "mouse", "keyboard", "electronics"],
-    ["book", "phone", "laptop", "tablet", "paper", "screen"],
-    ["car", "bike", "motorcycle", "vehicle", "automobile"],
-    ["cream", "serum", "lotion", "makeup", "cosmetic", "skincare"],
-    ["toy", "game", "puzzle", "play", "children", "kid"],
-    ["furniture", "chair", "table", "sofa", "bed", "shelf"],
-    ["kitchen", "cookware", "pan", "pot", "utensil", "appliance"],
-    ["jewelry", "necklace", "bracelet", "ring", "earring", "accessory"]
-  ];
+  const keywordContext = buildProductContext(keyword, "");
+  const keywordType = detectPrimaryProductType(keywordContext)?.type || "";
+  const contextType = detectPrimaryProductType(context)?.type || "";
+  const keywordCategory = detectProductCategory(keywordContext);
+  const contextCategory = detectProductCategory(context);
 
-  // Enhanced category detection
-  const productCategories = {
-    kitchen: ["bottle", "flask", "mug", "cup", "container", "tiffin", "lunch", "box", "plate", "spoon", "fork", "knife", "pan", "pot", "cookware", "utensil", "kitchen"],
-    clothing: ["shirt", "pant", "jeans", "dress", "shoe", "sandal", "boot", "sock", "jacket", "coat", "clothing", "apparel", "wear"],
-    home_decor: ["throw", "blanket", "cotton", "textile", "home", "living", "room", "decor", "curtain", "rug", "pillow", "cushion"],
-    electronics: ["phone", "laptop", "tablet", "charger", "cable", "speaker", "headphone", "mouse", "keyboard", "electronics", "gadget"],
-    beauty: ["cream", "serum", "lotion", "makeup", "cosmetic", "skincare", "beauty", "lipstick", "foundation"],
-    books: ["book", "novel", "paperback", "hardcover", "textbook", "magazine", "journal"],
-    toys: ["toy", "game", "puzzle", "play", "children", "kid", "baby", "doll", "action"],
-    furniture: ["furniture", "chair", "table", "sofa", "bed", "shelf", "cabinet", "desk", "drawer"],
-    jewelry: ["jewelry", "necklace", "bracelet", "ring", "earring", "accessory", "pendant", "chain"],
-    automotive: ["car", "bike", "motorcycle", "vehicle", "automobile", "tire", "wheel", "engine", "part"]
-  };
-
-  // Special case: If both are SASHAA WORLD cotton throw products, they're NOT different
-  const combinedText = context.combined.toLowerCase();
-  const keywordLower = keyword.toLowerCase();
-  
-  if (combinedText.includes("sashaa") && combinedText.includes("world") &&
-      keywordLower.includes("sashaa") && keywordLower.includes("world") &&
-      combinedText.includes("throw") && keywordLower.includes("throw") &&
-      combinedText.includes("cotton") && keywordLower.includes("cotton")) {
-    return false; // Same brand and product type - not different
-  }
-
-  // Check direct conflicting groups
-  for (const group of conflictingGroups) {
-    const keywordHits = group.filter((item) => keyword.includes(item));
-    const contextHits = group.filter((item) => context.combined.includes(item));
-
-    if (keywordHits.length > 0 && contextHits.length > 0) {
-      const keywordCategory = keywordHits[0];
-      const contextCategory = contextHits[0];
-      
-      // If they're from different subcategories within the same group
-      if (keywordCategory !== contextCategory) {
-        return true;
-      }
-    }
-  }
-
-  // Check product category mismatches
-  let keywordCategory = null;
-  let contextCategory = null;
-
-  for (const [category, keywords] of Object.entries(productCategories)) {
-    if (keywords.some(k => keyword.includes(k))) {
-      keywordCategory = category;
-    }
-    if (keywords.some(k => context.combined.includes(k))) {
-      contextCategory = category;
-    }
-  }
-
-  // If both have categories but they're different, it's a mismatch
   if (keywordCategory && contextCategory && keywordCategory !== contextCategory) {
     return true;
   }
 
-  // Additional heuristics for subtle mismatches
-  const keywordTokens = tokenize(keyword);
-  const contextTokens = context.combinedTokenSet;
-  
-  // If keyword has specific product indicators that don't match context
-  const productIndicators = {
-    "digital": ["screen", "display", "battery", "charging", "electronic"],
-    "physical": ["hardcover", "paperback", "print", "manual"],
-    "wearable": ["size", "fit", "comfort", "fabric", "material"],
-    "consumable": ["edible", "food", "drink", "flavor", "taste"]
-  };
-
-  for (const [type, indicators] of Object.entries(productIndicators)) {
-    const keywordHasIndicator = indicators.some(ind => keywordTokens.includes(ind));
-    const contextHasIndicator = indicators.some(ind => contextTokens.has(ind));
-    
-    if (keywordHasIndicator && !contextHasIndicator) {
-      // Check if context has indicators of a different type
-      for (const [otherType, otherIndicators] of Object.entries(productIndicators)) {
-        if (type !== otherType && otherIndicators.some(ind => contextTokens.has(ind))) {
-          return true;
-        }
-      }
-    }
+  if (keywordType && contextType && keywordType !== contextType && keywordCategory === contextCategory) {
+    return true;
   }
 
   return false;
@@ -1987,77 +2054,72 @@ function buildOwnProductProfile() {
     .filter((line) => !isBadProfileText(line))
     .join(" ");
   const context = buildProductContext(title, description);
-  const summary = summarizeProduct(title, description);
+  const signals = buildProductSignals(title, description, context);
+  const summary = summarizeProduct(title, description, signals);
 
   return {
     asin: extractAsinFromInput(yourProductAsinInput.value),
     title,
     description,
     context,
+    signals,
     summary,
     hasClearContext: Boolean(hasUsableProductTitle(title) || description.trim()),
   };
 }
 
-function summarizeProduct(title, description) {
-  const junkTokens = new Set([
-    "if",
-    "lt",
-    "gt",
-    "ie",
-    "html",
-    "lang",
-    "clas",
-    "class",
-    "viewport",
-    "charset",
-    "content",
-    "initial",
-    "scale",
-    "width",
-    "device",
-    "js",
-    "no",
-    "women",
-    "pack",
-    "pure",
-    "made",
-  ]);
-  const titleTokens = [...new Set(tokenize(title))].filter((token) => !junkTokens.has(token));
-  const descriptionTokens = [...new Set(tokenize(description))].filter(
-    (token) => !junkTokens.has(token)
-  );
+function summarizeProduct(title, description, signals = buildProductSignals(title, description)) {
+  const context = buildProductContext(title, description);
+  const titleTokens = [...new Set(context.titleTokens)];
+  const descriptionTokens = [...new Set(context.descriptionTokens)];
   const productType =
+    signals.primaryType ||
     titleTokens.slice(0, 6).join(" ") ||
     descriptionTokens.slice(0, 6).join(" ") ||
     "Not clear";
-  const featurePool = [...new Set([...descriptionTokens, ...titleTokens.slice(2)])];
-  const keyFeatures = featurePool.slice(0, 8);
-  const useCase = inferUseCase(titleTokens, descriptionTokens);
+  const keyFeatures = [
+    ...signals.materials,
+    ...signals.features,
+    ...signals.sizeIndicators,
+    ...descriptionTokens.slice(0, 8),
+  ].filter(Boolean);
+  const useCase = inferUseCase(signals, descriptionTokens);
 
   return {
     productType,
-    keyFeatures: keyFeatures.length ? keyFeatures : titleTokens.slice(0, 6),
+    keyFeatures: [...new Set(keyFeatures)].slice(0, 8).length
+      ? [...new Set(keyFeatures)].slice(0, 8)
+      : titleTokens.slice(0, 6),
     useCase: useCase.length ? useCase : titleTokens.slice(0, 6),
   };
 }
 
-function inferUseCase(titleTokens, descriptionTokens) {
-  const combined = [...titleTokens, ...descriptionTokens];
-
-  if (combined.includes("handkerchief") || combined.includes("hanky")) {
+function inferUseCase(signals, fallbackTokens) {
+  if (signals.primaryType === "handkerchief") {
     return ["daily use handkerchief", "personal cotton use"];
   }
 
-  if (combined.includes("blanket") || combined.includes("throw")) {
+  if (signals.primaryType === "throw blanket") {
     return ["bed throw use", "sofa and home decor use"];
   }
 
-  if (combined.includes("hipster") || combined.includes("innerwear")) {
+  if (signals.primaryType === "underwear") {
     return ["women innerwear use", "daily wear comfort use"];
   }
 
-  return descriptionTokens.slice(8, 14);
+  if (signals.primaryType === "water bottle") {
+    return ["daily hydration use", "school or travel use"];
+  }
+
+  if (signals.primaryType === "lunch box") {
+    return ["school lunch use", "food carrying use"];
+  }
+
+  if (signals.useCases.length) {
+    return signals.useCases;
+  }
+
+  return fallbackTokens.slice(8, 14);
 }
 
 function scoreTargetAsin(asin, ownProduct, targetProduct) {
@@ -2067,36 +2129,34 @@ function scoreTargetAsin(asin, ownProduct, targetProduct) {
   const targetContext = buildProductContext(targetProduct.title || "", targetDescription);
   const ownTokens = [...new Set([...ownProduct.context.titleTokens, ...ownProduct.context.descriptionTokens])];
   const targetTokens = [...new Set([...targetContext.titleTokens, ...targetContext.descriptionTokens])];
-  const overlap = ownTokens.filter((token) => targetTokens.includes(token));
-  const overlapRatio = ownTokens.length ? overlap.length / ownTokens.length : 0;
-  const sameTitleType = ownProduct.context.titleTokens.some((token) =>
-    targetContext.titleTokens.includes(token)
-  );
+  const sharedTokens = overlapItems(ownTokens, targetTokens);
+  const tokenSimilarity = jaccardSimilarity(ownTokens, targetTokens);
+  const titleSimilarity = jaccardSimilarity(ownProduct.context.titleTokens, targetContext.titleTokens);
   const normalizedOwnTitle = normalizeComparableTitle(ownProduct.title);
   const normalizedTargetTitle = normalizeComparableTitle(targetProduct.title || targetDescription);
   const nearSameTitle =
     Boolean(normalizedOwnTitle) && normalizedOwnTitle === normalizedTargetTitle;
-  const sameBrand = extractBrandToken(ownProduct.title) && extractBrandToken(ownProduct.title) === extractBrandToken(targetProduct.title || "");
-  
-  // Enhanced category mismatch detection
+  const ownSignals = ownProduct.signals || buildProductSignals(ownProduct.title, ownProduct.description, ownProduct.context);
+  const targetSignals = buildProductSignals(targetProduct.title || "", targetDescription, targetContext);
+  const sameBrand = Boolean(ownSignals.brand) && ownSignals.brand === targetSignals.brand;
+  const sameCategory = Boolean(ownSignals.category) && ownSignals.category === targetSignals.category;
+  const categoryMismatch = Boolean(ownSignals.category) && Boolean(targetSignals.category) && ownSignals.category !== targetSignals.category;
+  const samePrimaryType = Boolean(ownSignals.primaryType) && ownSignals.primaryType === targetSignals.primaryType;
+  const materialOverlap = overlapItems(ownSignals.materials, targetSignals.materials);
+  const audienceOverlap = overlapItems(ownSignals.audiences, targetSignals.audiences);
+  const useCaseOverlap = overlapItems(ownSignals.useCases, targetSignals.useCases);
+  const featureOverlap = overlapItems(ownSignals.features, targetSignals.features);
+  const sizeOverlap = overlapItems(ownSignals.sizeIndicators, targetSignals.sizeIndicators);
+  const signalOverlapCount =
+    materialOverlap.length +
+    audienceOverlap.length +
+    useCaseOverlap.length +
+    featureOverlap.length +
+    sizeOverlap.length;
   const differentProduct = looksLikeDifferentProduct(
     normalizeText(targetProduct.title || targetDescription),
     ownProduct.context
   );
-
-  // Additional category-specific checks
-  const ownCategory = detectProductCategory(ownProduct.context);
-  const targetCategory = detectProductCategory(targetContext);
-  const categoryMismatch = ownCategory && targetCategory && ownCategory !== targetCategory;
-
-  // Enhanced brand and product line detection
-  const ownBrand = extractBrandToken(ownProduct.title);
-  const targetBrand = extractBrandToken(targetProduct.title || "");
-  const sameBrandDetected = ownBrand && targetBrand && ownBrand === targetBrand;
-  
-  // Special handling for Caruso Italy products
-  const isCarusoBrand = ownBrand === "caruso" && targetBrand === "caruso";
-  const bothCarusoProducts = isCarusoBrand && ownCategory === "clothing" && targetCategory === "clothing";
 
   let score = 0;
   let reason = "Different product type or weak buying-intent overlap.";
@@ -2104,33 +2164,30 @@ function scoreTargetAsin(asin, ownProduct, targetProduct) {
   if (asin === ownProduct.asin) {
     score = 9;
     reason = "This is the same ASIN as your product, so it is an exact match.";
-  } else if (nearSameTitle) {
+  } else if (nearSameTitle && samePrimaryType && sameCategory) {
     score = 8;
-    reason = "Product titles match almost exactly, with only minor variation like color or finish.";
-  } else if (bothCarusoProducts && overlapRatio >= 0.15) {
+    reason = "Same product family with only minor variation such as color, pack, or finish.";
+  } else if (sameBrand && samePrimaryType && sameCategory && (titleSimilarity >= 0.5 || signalOverlapCount >= 3)) {
+    score = 8;
+    reason = "Same brand and same product type with very strong attribute overlap.";
+  } else if (samePrimaryType && sameCategory && (titleSimilarity >= 0.4 || signalOverlapCount >= 2 || tokenSimilarity >= 0.35)) {
     score = 7;
-    reason = "Same Caruso Italy brand and clothing category with good product overlap.";
-  } else if (sameBrandDetected && sameTitleType && overlapRatio >= 0.25 && !categoryMismatch) {
+    reason = "Same product type with strong use-case and feature overlap.";
+  } else if (sameCategory && (samePrimaryType || signalOverlapCount >= 2 || tokenSimilarity >= 0.28)) {
     score = 6;
-    reason = "Same brand and product type with moderate overlap in features.";
-  } else if (sameTitleType && overlapRatio >= 0.35 && !categoryMismatch) {
-    score = 7;
-    reason = "Same product type with strong feature and use-case overlap.";
-  } else if (sameTitleType && overlapRatio >= 0.25 && !categoryMismatch) {
-    score = 6;
-    reason = "Same category with good overlap, commercially relevant.";
-  } else if (sameTitleType && overlapRatio >= 0.18 && !categoryMismatch) {
+    reason = "Same category with meaningful overlap, but not close enough to be a top target.";
+  } else if (sameCategory && (signalOverlapCount >= 1 || tokenSimilarity >= 0.18)) {
     score = 5;
-    reason = "Same category with some differences, still relevant for targeting.";
-  } else if (overlapRatio >= 0.15 && !categoryMismatch) {
+    reason = "Related listing in the same category, but broader and less direct.";
+  } else if (!categoryMismatch && (audienceOverlap.length || materialOverlap.length || useCaseOverlap.length)) {
     score = 4;
-    reason = "Related product with partial overlap, decent placement fit.";
-  } else if (overlapRatio > 0 && !categoryMismatch) {
+    reason = "Some buyer-intent overlap exists, but the match is still weak.";
+  } else if (!categoryMismatch && sharedTokens.length) {
     score = 3;
-    reason = "Some relation found, limited but potentially useful overlap.";
+    reason = "Thin relation only, so this ASIN should be reviewed carefully.";
   } else if (categoryMismatch) {
     score = 0;
-    reason = `Different product category (${ownCategory} vs ${targetCategory}). This should be excluded from ads.`;
+    reason = `Different product category (${ownSignals.category} vs ${targetSignals.category}). This should be excluded from ads.`;
   }
 
   if (differentProduct && score > 2) {
