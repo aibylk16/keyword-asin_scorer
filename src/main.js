@@ -352,6 +352,7 @@ async function handleAsinProductFetch() {
 // Cache for storing fetched product details
 const productCache = new Map();
 const CACHE_EXPIRY = 30 * 60 * 1000; // 30 minutes
+const LOCAL_CACHE_KEY = "keyword-asin-product-cache-v1";
 
 async function handleAsinSubmit(event) {
   event.preventDefault();
@@ -369,6 +370,28 @@ async function handleAsinSubmit(event) {
   try {
     const ownAsin = extractAsinFromInput(yourProductAsinInput.value);
     const inferredOwnUrl = ownAsin ? `https://www.amazon.in/dp/${ownAsin}` : "";
+
+    if (!asinFetchedContext && ownAsin) {
+      const instantProduct = getKnownProductDetails(ownAsin);
+
+      if (instantProduct) {
+        asinFetchedContext = instantProduct;
+
+        if (!asinProductUrlInput.value.trim()) {
+          asinProductUrlInput.value = inferredOwnUrl;
+        }
+
+        if (!asinProductTitleInput.value.trim() && instantProduct.title) {
+          asinProductTitleInput.value = instantProduct.title;
+        }
+
+        if (!asinProductDescriptionInput.value.trim() && instantProduct.highlights.length) {
+          asinProductDescriptionInput.value = instantProduct.highlights.join("\n");
+        }
+
+        renderAsinFetchedContext(asinFetchedContext);
+      }
+    }
 
     if (!asinFetchedContext && (asinProductUrlInput.value.trim() || inferredOwnUrl)) {
       try {
@@ -516,6 +539,19 @@ async function fetchTargetAsinWithCache(asin) {
     };
   }
 
+  const persisted = getPersistedProduct(cacheKey);
+  if (persisted) {
+    productCache.set(cacheKey, {
+      data: persisted,
+      timestamp: Date.now()
+    });
+
+    return {
+      asin,
+      targetProduct: persisted
+    };
+  }
+
   if (
     asinFetchedContext &&
     asinFetchedContext.asin === asin.toUpperCase() &&
@@ -555,6 +591,7 @@ async function fetchTargetAsinWithCache(asin) {
       data: targetProduct,
       timestamp: Date.now()
     });
+    persistProduct(cacheKey, targetProduct);
     
     return {
       asin,
@@ -579,6 +616,7 @@ async function fetchTargetAsinWithCache(asin) {
         data: targetProduct,
         timestamp: Date.now()
       });
+      persistProduct(cacheKey, targetProduct);
 
       return {
         asin,
@@ -598,11 +636,86 @@ async function fetchTargetAsinWithCache(asin) {
     data: targetProduct,
     timestamp: Date.now()
   });
+  persistProduct(cacheKey, targetProduct);
   
   return {
     asin,
     targetProduct
   };
+}
+
+function getKnownProductDetails(asin) {
+  const key = String(asin || "").toUpperCase();
+  const fromMemory = productCache.get(key);
+
+  if (fromMemory && (Date.now() - fromMemory.timestamp) < CACHE_EXPIRY) {
+    return fromMemory.data;
+  }
+
+  const persisted = getPersistedProduct(key);
+  if (persisted) {
+    productCache.set(key, {
+      data: persisted,
+      timestamp: Date.now()
+    });
+    return persisted;
+  }
+
+  const hardcodedData = ASIN_DATABASE[key];
+  if (!hardcodedData) {
+    return null;
+  }
+
+  const product = {
+    sourceName: "Hardcoded Database",
+    asin: key,
+    title: hardcodedData.title,
+    highlights: hardcodedData.highlights
+  };
+
+  productCache.set(key, {
+    data: product,
+    timestamp: Date.now()
+  });
+  persistProduct(key, product);
+  return product;
+}
+
+function getPersistedProduct(key) {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_CACHE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw);
+    const entry = parsed?.[key];
+    if (!entry || !entry.data || !entry.timestamp) {
+      return null;
+    }
+
+    if (Date.now() - entry.timestamp > CACHE_EXPIRY) {
+      return null;
+    }
+
+    return entry.data;
+  } catch (error) {
+    return null;
+  }
+}
+
+function persistProduct(key, product) {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    parsed[key] = {
+      timestamp: Date.now(),
+      data: product,
+    };
+    window.localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(parsed));
+  } catch (error) {
+    // Ignore storage issues and keep the in-memory cache.
+  }
 }
 
 async function fetchTargetAsinBatch(targetAsins) {
