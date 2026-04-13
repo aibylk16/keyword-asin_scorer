@@ -221,15 +221,19 @@
               ></textarea>
             </div>
 
-            <div class="field">
-              <label for="your-product-asin">Your Product ASIN</label>
-              <input
-                id="your-product-asin"
-                name="yourProductAsin"
-                type="text"
-                placeholder="Example: B0F269WYKG"
-              />
-            </div>
+              <div class="field">
+                <label for="your-product-asin">Your Product ASIN</label>
+                <p class="field-note">
+                  Paste either a plain ASIN like <code>B086PV1KWJ</code> or a full Amazon link like
+                  <code>https://www.amazon.in/dp/B086PV1KWJ</code>.
+                </p>
+                <input
+                  id="your-product-asin"
+                  name="yourProductAsin"
+                  type="text"
+                  placeholder="Example: B0F269WYKG or https://www.amazon.in/dp/B0F269WYKG"
+                />
+              </div>
 
               <div class="field">
                 <label for="target-asin-list">Target ASIN List</label>

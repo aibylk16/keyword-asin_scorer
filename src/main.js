@@ -367,7 +367,7 @@ async function handleAsinSubmit(event) {
   setAsinStatus(`Fetching details for ${targetAsins.length} ASINs...`);
 
   try {
-    const ownAsin = yourProductAsinInput.value.trim().toUpperCase();
+    const ownAsin = extractAsinFromInput(yourProductAsinInput.value);
     const inferredOwnUrl = ownAsin ? `https://www.amazon.in/dp/${ownAsin}` : "";
 
     if (!asinFetchedContext && (asinProductUrlInput.value.trim() || inferredOwnUrl)) {
@@ -1853,7 +1853,7 @@ function buildOwnProductProfile() {
   const summary = summarizeProduct(title, description);
 
   return {
-    asin: yourProductAsinInput.value.trim().toUpperCase(),
+    asin: extractAsinFromInput(yourProductAsinInput.value),
     title,
     description,
     context,
