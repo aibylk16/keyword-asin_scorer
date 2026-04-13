@@ -1,4 +1,7 @@
 const scrapForm = document.querySelector("#scrap-form");
+const scrapMarketplaceSelect = document.querySelector("#scrap-marketplace");
+const scrapMarketplaceBase = document.querySelector("#scrap-marketplace-base");
+const scrapMarketplaceTemplate = document.querySelector("#scrap-marketplace-template");
 const scrapAsinsInput = document.querySelector("#scrap-asins");
 const scrapStatusMessage = document.querySelector("#scrap-status-message");
 const scrapResultsBody = document.querySelector("#scrap-results-body");
@@ -18,6 +21,26 @@ const SCRAP_SAMPLE_ASINS = [
 
 const SCRAP_CONCURRENCY = 3;
 const SCRAP_RETRY_LIMIT = 2;
+const SCRAP_MARKETPLACE_MAP = {
+  IN: "https://www.amazon.in/dp/",
+  US: "https://www.amazon.com/dp/",
+  CA: "https://www.amazon.ca/dp/",
+  AU: "https://www.amazon.com.au/dp/",
+  UK: "https://www.amazon.co.uk/dp/",
+  DE: "https://www.amazon.de/dp/",
+  FR: "https://www.amazon.fr/dp/",
+  IT: "https://www.amazon.it/dp/",
+  ES: "https://www.amazon.es/dp/",
+  PL: "https://www.amazon.pl/dp/",
+};
+const SCRAP_HOST_TO_MARKETPLACE = Object.entries(SCRAP_MARKETPLACE_MAP).reduce(
+  (map, [code, baseUrl]) => {
+    map[new URL(baseUrl).host] = code;
+    return map;
+  },
+  {}
+);
+const SCRAP_DEFAULT_MARKETPLACE = "IN";
 
 let currentScrapResults = [];
 
@@ -29,14 +52,27 @@ function initializeScrapPage() {
   }
 
   scrapForm.addEventListener("submit", handleScrapSubmit);
+  updateScrapMarketplaceDisplay();
+
+  scrapMarketplaceSelect?.addEventListener("change", () => {
+    updateScrapMarketplaceDisplay();
+  });
 
   loadScrapSampleButton?.addEventListener("click", () => {
     scrapAsinsInput.value = SCRAP_SAMPLE_ASINS;
+    if (scrapMarketplaceSelect) {
+      scrapMarketplaceSelect.value = SCRAP_DEFAULT_MARKETPLACE;
+      updateScrapMarketplaceDisplay();
+    }
     setScrapStatus("Sample ASINs loaded.");
   });
 
   resetScrapFormButton?.addEventListener("click", () => {
     scrapForm.reset();
+    if (scrapMarketplaceSelect) {
+      scrapMarketplaceSelect.value = SCRAP_DEFAULT_MARKETPLACE;
+      updateScrapMarketplaceDisplay();
+    }
     currentScrapResults = [];
     renderScrapEmptyState();
     setScrapStatus("Product detail scraper cleared.");
@@ -78,7 +114,8 @@ function initializeScrapPage() {
 async function handleScrapSubmit(event) {
   event.preventDefault();
 
-  const parsedInputs = parseScrapInputs(scrapAsinsInput.value);
+  const marketplace = normalizeScrapMarketplace(scrapMarketplaceSelect?.value);
+  const parsedInputs = parseScrapInputs(scrapAsinsInput.value, marketplace);
 
   if (!parsedInputs.length) {
     currentScrapResults = [];
@@ -90,6 +127,7 @@ async function handleScrapSubmit(event) {
   currentScrapResults = parsedInputs.map((item) => ({
     asin: item.asin,
     input: item.input,
+    marketplace: item.marketplace,
     url: item.url,
     status: item.valid ? "queued" : "failed",
     sourceName: "",
@@ -143,6 +181,7 @@ async function fetchScrapItem(item) {
     try {
       const params = new URLSearchParams();
       params.set("asin", item.asin);
+      params.set("marketplace", item.marketplace || SCRAP_DEFAULT_MARKETPLACE);
       const response = await fetch(`/api/scrape-product?${params.toString()}`, {
         method: "GET",
         headers: {
@@ -192,7 +231,7 @@ async function fetchScrapItem(item) {
   };
 }
 
-function parseScrapInputs(input) {
+function parseScrapInputs(input, selectedMarketplace = SCRAP_DEFAULT_MARKETPLACE) {
   const lines = input
     .split(/\n|,/)
     .map((item) => item.trim())
@@ -203,12 +242,15 @@ function parseScrapInputs(input) {
     .map((value) => {
       const asin = extractAsinFromInput(value);
       const valid = /^[A-Z0-9]{10}$/.test(asin);
+      const marketplace =
+        inferScrapMarketplace(value) || normalizeScrapMarketplace(selectedMarketplace);
 
       return {
         input: value,
         asin,
         valid,
-        url: valid ? `https://www.amazon.in/dp/${asin}` : "",
+        marketplace,
+        url: valid ? buildScrapProductUrl(asin, marketplace) : "",
       };
     })
     .filter((item) => {
@@ -244,6 +286,48 @@ function extractAsinFromInput(value) {
 
   const fallbackMatch = cleaned.match(/\b([A-Z0-9]{10})\b/i);
   return fallbackMatch?.[1]?.toUpperCase() || "";
+}
+
+function normalizeScrapMarketplace(value) {
+  const code = String(value || "").trim().toUpperCase();
+  return SCRAP_MARKETPLACE_MAP[code] ? code : SCRAP_DEFAULT_MARKETPLACE;
+}
+
+function getScrapMarketplaceBaseUrl(value) {
+  return SCRAP_MARKETPLACE_MAP[normalizeScrapMarketplace(value)];
+}
+
+function buildScrapProductUrl(asin, marketplace) {
+  const normalizedAsin = extractAsinFromInput(asin);
+  return normalizedAsin ? `${getScrapMarketplaceBaseUrl(marketplace)}${normalizedAsin}` : "";
+}
+
+function inferScrapMarketplace(value) {
+  const rawValue = String(value || "").trim();
+
+  if (!rawValue || !/amazon\./i.test(rawValue)) {
+    return "";
+  }
+
+  try {
+    const normalized = /^https?:\/\//i.test(rawValue) ? rawValue : `https://${rawValue}`;
+    const hostname = new URL(normalized).hostname.toLowerCase();
+    return SCRAP_HOST_TO_MARKETPLACE[hostname] || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function updateScrapMarketplaceDisplay() {
+  const baseUrl = getScrapMarketplaceBaseUrl(scrapMarketplaceSelect?.value);
+
+  if (scrapMarketplaceBase) {
+    scrapMarketplaceBase.textContent = baseUrl;
+  }
+
+  if (scrapMarketplaceTemplate) {
+    scrapMarketplaceTemplate.textContent = `${baseUrl}{ASIN}`;
+  }
 }
 
 function updateScrapItem(index, next) {

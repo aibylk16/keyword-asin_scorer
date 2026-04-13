@@ -1,4 +1,6 @@
 const form = document.querySelector("#score-form");
+const keywordMarketplaceSelect = document.querySelector("#keyword-marketplace");
+const keywordMarketplaceBase = document.querySelector("#keyword-marketplace-base");
 const productUrlInput = document.querySelector("#product-url");
 const titleInput = document.querySelector("#product-title");
 const descriptionInput = document.querySelector("#product-description");
@@ -17,6 +19,8 @@ const fetchedSource = document.querySelector("#fetched-source");
 const fetchedAsin = document.querySelector("#fetched-asin");
 const fetchedHighlights = document.querySelector("#fetched-highlights");
 const asinForm = document.querySelector("#asin-form");
+const asinMarketplaceSelect = document.querySelector("#asin-marketplace");
+const asinMarketplaceBase = document.querySelector("#asin-marketplace-base");
 const asinProductUrlInput = document.querySelector("#asin-product-url");
 const asinProductTitleInput = document.querySelector("#asin-product-title");
 const asinProductDescriptionInput = document.querySelector("#asin-product-description");
@@ -36,6 +40,27 @@ const copyAsinOutputButton = document.querySelector("#copy-asin-output");
 
 let fetchedContext = null;
 let asinFetchedContext = null;
+
+const MARKETPLACE_MAP = {
+  IN: "https://www.amazon.in/dp/",
+  US: "https://www.amazon.com/dp/",
+  CA: "https://www.amazon.ca/dp/",
+  AU: "https://www.amazon.com.au/dp/",
+  UK: "https://www.amazon.co.uk/dp/",
+  DE: "https://www.amazon.de/dp/",
+  FR: "https://www.amazon.fr/dp/",
+  IT: "https://www.amazon.it/dp/",
+  ES: "https://www.amazon.es/dp/",
+  PL: "https://www.amazon.pl/dp/",
+};
+const MARKETPLACE_HOST_TO_CODE = Object.entries(MARKETPLACE_MAP).reduce(
+  (map, [code, baseUrl]) => {
+    map[new URL(baseUrl).host] = code;
+    return map;
+  },
+  {}
+);
+const DEFAULT_MARKETPLACE = "IN";
 
 const STOP_WORDS = new Set([
   "a",
@@ -63,6 +88,7 @@ const STOP_WORDS = new Set([
 ]);
 
 const SAMPLE_DATA = {
+  marketplace: "IN",
   url: "https://www.amazon.in/dp/B0F269WYKG",
   title: "Stainless Steel Water Bottle 1L Insulated Leakproof Flask",
   description:
@@ -82,6 +108,7 @@ const SAMPLE_DATA = {
 };
 
 const ASIN_SAMPLE_DATA = {
+  marketplace: "IN",
   url: "https://www.amazon.in/dp/B0F269WYKG",
   title: "Stainless Steel Water Bottle 1L Insulated Leakproof Flask",
   description:
@@ -229,6 +256,75 @@ function initializeApp() {
   initializeAsinTool();
 }
 
+function normalizeMarketplaceCode(value) {
+  const code = String(value || "").trim().toUpperCase();
+  return MARKETPLACE_MAP[code] ? code : DEFAULT_MARKETPLACE;
+}
+
+function getMarketplaceBaseUrl(marketplace) {
+  return MARKETPLACE_MAP[normalizeMarketplaceCode(marketplace)];
+}
+
+function getMarketplaceHost(marketplace) {
+  return getMarketplaceBaseUrl(marketplace).replace(/\/dp\/$/, "");
+}
+
+function inferMarketplaceFromInput(value) {
+  const rawValue = String(value || "").trim();
+
+  if (!rawValue || !/amazon\./i.test(rawValue)) {
+    return "";
+  }
+
+  try {
+    const normalized = /^https?:\/\//i.test(rawValue) ? rawValue : `https://${rawValue}`;
+    const hostname = new URL(normalized).hostname.toLowerCase();
+    return MARKETPLACE_HOST_TO_CODE[hostname] || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function buildMarketplaceProductUrl(value, marketplace) {
+  const asin = extractAsinFromInput(value);
+  return asin ? `${getMarketplaceBaseUrl(marketplace)}${asin}` : "";
+}
+
+function isAmazonAsinInput(value) {
+  const rawValue = String(value || "").trim();
+  return /^[A-Z0-9]{10}$/i.test(rawValue) || /amazon\./i.test(rawValue);
+}
+
+function updateMarketplaceDisplay(selectElement, baseElement) {
+  if (!baseElement) {
+    return;
+  }
+
+  baseElement.textContent = getMarketplaceBaseUrl(selectElement?.value);
+}
+
+function syncMarketplaceFromInput(selectElement, baseElement, inputElement, rewriteUrl = false) {
+  if (!selectElement || !inputElement) {
+    return;
+  }
+
+  const rawValue = inputElement.value.trim();
+  const inferredMarketplace = inferMarketplaceFromInput(rawValue);
+
+  if (inferredMarketplace) {
+    selectElement.value = inferredMarketplace;
+  }
+
+  updateMarketplaceDisplay(selectElement, baseElement);
+
+  if (rewriteUrl && isAmazonAsinInput(rawValue)) {
+    const nextUrl = buildMarketplaceProductUrl(rawValue, selectElement.value);
+    if (nextUrl) {
+      inputElement.value = nextUrl;
+    }
+  }
+}
+
 function initializeKeywordTool() {
   if (
     !form ||
@@ -244,8 +340,32 @@ function initializeKeywordTool() {
 
   form.addEventListener("submit", handleSubmit);
   fetchProductButton?.addEventListener("click", handleFetchProduct);
+  updateMarketplaceDisplay(keywordMarketplaceSelect, keywordMarketplaceBase);
+  keywordMarketplaceSelect?.addEventListener("change", () => {
+    updateMarketplaceDisplay(keywordMarketplaceSelect, keywordMarketplaceBase);
+    if (productUrlInput?.value.trim()) {
+      syncMarketplaceFromInput(
+        keywordMarketplaceSelect,
+        keywordMarketplaceBase,
+        productUrlInput,
+        true
+      );
+    }
+  });
+  productUrlInput?.addEventListener("change", () => {
+    syncMarketplaceFromInput(
+      keywordMarketplaceSelect,
+      keywordMarketplaceBase,
+      productUrlInput,
+      true
+    );
+  });
 
   fillSampleButton?.addEventListener("click", () => {
+    if (keywordMarketplaceSelect) {
+      keywordMarketplaceSelect.value = SAMPLE_DATA.marketplace;
+      updateMarketplaceDisplay(keywordMarketplaceSelect, keywordMarketplaceBase);
+    }
     productUrlInput.value = SAMPLE_DATA.url;
     titleInput.value = SAMPLE_DATA.title;
     descriptionInput.value = SAMPLE_DATA.description;
@@ -258,6 +378,10 @@ function initializeKeywordTool() {
 
   resetFormButton?.addEventListener("click", () => {
     form.reset();
+    if (keywordMarketplaceSelect) {
+      keywordMarketplaceSelect.value = DEFAULT_MARKETPLACE;
+      updateMarketplaceDisplay(keywordMarketplaceSelect, keywordMarketplaceBase);
+    }
     fetchedContext = null;
     renderFetchedContext(null);
     renderEmptyState();
@@ -329,8 +453,56 @@ function initializeAsinTool() {
 
   asinForm.addEventListener("submit", handleAsinSubmit);
   fetchAsinProductButton?.addEventListener("click", handleAsinProductFetch);
+  updateMarketplaceDisplay(asinMarketplaceSelect, asinMarketplaceBase);
+  asinMarketplaceSelect?.addEventListener("change", () => {
+    updateMarketplaceDisplay(asinMarketplaceSelect, asinMarketplaceBase);
+
+    if (asinProductUrlInput?.value.trim()) {
+      syncMarketplaceFromInput(
+        asinMarketplaceSelect,
+        asinMarketplaceBase,
+        asinProductUrlInput,
+        true
+      );
+    } else if (yourProductAsinInput?.value.trim()) {
+      const nextUrl = buildMarketplaceProductUrl(
+        yourProductAsinInput.value,
+        asinMarketplaceSelect.value
+      );
+      if (nextUrl) {
+        asinProductUrlInput.value = nextUrl;
+      }
+    }
+  });
+  asinProductUrlInput?.addEventListener("change", () => {
+    syncMarketplaceFromInput(
+      asinMarketplaceSelect,
+      asinMarketplaceBase,
+      asinProductUrlInput,
+      true
+    );
+  });
+  yourProductAsinInput?.addEventListener("change", () => {
+    const inferredMarketplace = inferMarketplaceFromInput(yourProductAsinInput.value);
+    if (inferredMarketplace && asinMarketplaceSelect) {
+      asinMarketplaceSelect.value = inferredMarketplace;
+      updateMarketplaceDisplay(asinMarketplaceSelect, asinMarketplaceBase);
+    }
+
+    const nextUrl = buildMarketplaceProductUrl(
+      yourProductAsinInput.value,
+      asinMarketplaceSelect?.value
+    );
+    if (nextUrl) {
+      asinProductUrlInput.value = nextUrl;
+    }
+  });
 
   loadAsinSampleButton?.addEventListener("click", () => {
+    if (asinMarketplaceSelect) {
+      asinMarketplaceSelect.value = ASIN_SAMPLE_DATA.marketplace;
+      updateMarketplaceDisplay(asinMarketplaceSelect, asinMarketplaceBase);
+    }
     asinProductUrlInput.value = ASIN_SAMPLE_DATA.url;
     asinProductTitleInput.value = ASIN_SAMPLE_DATA.title;
     asinProductDescriptionInput.value = ASIN_SAMPLE_DATA.description;
@@ -345,6 +517,10 @@ function initializeAsinTool() {
 
   resetAsinFormButton?.addEventListener("click", () => {
     asinForm.reset();
+    if (asinMarketplaceSelect) {
+      asinMarketplaceSelect.value = DEFAULT_MARKETPLACE;
+      updateMarketplaceDisplay(asinMarketplaceSelect, asinMarketplaceBase);
+    }
     asinFetchedContext = null;
     renderAsinFetchedContext(null);
     renderAsinEmptyState();
@@ -401,19 +577,22 @@ function handleSubmit(event) {
 }
 
 async function handleFetchProduct() {
-  const url = productUrlInput.value.trim();
+  const marketplace = normalizeMarketplaceCode(keywordMarketplaceSelect?.value);
+  const url = normalizeUrl(productUrlInput.value.trim(), marketplace);
 
   if (!url) {
-    setStatus("Paste a product URL first.", true);
+    setStatus("Paste a product URL or ASIN first.", true);
     return;
   }
+
+  productUrlInput.value = url;
 
   fetchProductButton.disabled = true;
   fetchProductButton.textContent = "Fetching...";
   setStatus("Fetching product details from the web...");
 
   try {
-    const liveProduct = await fetchProductDetails(url);
+    const liveProduct = await fetchProductDetails(url, 12000, { marketplace });
     fetchedContext = liveProduct;
 
     if (!titleInput.value.trim() && liveProduct.title) {
@@ -443,19 +622,22 @@ async function handleFetchProduct() {
 }
 
 async function handleAsinProductFetch() {
-  const url = asinProductUrlInput.value.trim();
+  const marketplace = normalizeMarketplaceCode(asinMarketplaceSelect?.value);
+  const url = normalizeUrl(asinProductUrlInput.value.trim(), marketplace);
 
   if (!url) {
-    setAsinStatus("Paste a product URL first.", true);
+    setAsinStatus("Paste a product URL or ASIN first.", true);
     return;
   }
+
+  asinProductUrlInput.value = url;
 
   fetchAsinProductButton.disabled = true;
   fetchAsinProductButton.textContent = "Fetching...";
   setAsinStatus("Fetching base product details from the web...");
 
   try {
-    const liveProduct = await fetchProductDetails(url);
+    const liveProduct = await fetchProductDetails(url, 12000, { marketplace });
     asinFetchedContext = liveProduct;
 
     if (!asinProductTitleInput.value.trim() && liveProduct.title) {
@@ -504,8 +686,11 @@ async function handleAsinSubmit(event) {
   setAsinStatus(`Fetching details for ${targetAsins.length} ASINs...`);
 
   try {
+    const marketplace = normalizeMarketplaceCode(asinMarketplaceSelect?.value);
     const ownAsin = extractAsinFromInput(yourProductAsinInput.value);
-    const inferredOwnUrl = ownAsin ? `https://www.amazon.in/dp/${ownAsin}` : "";
+    const inferredOwnUrl = ownAsin
+      ? buildMarketplaceProductUrl(ownAsin, marketplace)
+      : "";
 
     if (!asinFetchedContext && ownAsin) {
       const instantProduct = getKnownProductDetails(ownAsin);
@@ -531,8 +716,13 @@ async function handleAsinSubmit(event) {
 
     if (!asinFetchedContext && (asinProductUrlInput.value.trim() || inferredOwnUrl)) {
       try {
-        const baseUrl = asinProductUrlInput.value.trim() || inferredOwnUrl;
-        asinFetchedContext = await fetchProductDetails(baseUrl);
+        const baseUrl = normalizeUrl(
+          asinProductUrlInput.value.trim() || inferredOwnUrl,
+          marketplace
+        );
+        asinFetchedContext = await fetchProductDetails(baseUrl, 12000, {
+          marketplace,
+        });
 
         if (!asinProductUrlInput.value.trim() && inferredOwnUrl) {
           asinProductUrlInput.value = inferredOwnUrl;
@@ -571,7 +761,7 @@ async function handleAsinSubmit(event) {
       return;
     }
 
-    const scoredTargets = await fetchTargetAsinBatch(targetAsins);
+    const scoredTargets = await fetchTargetAsinBatch(targetAsins, marketplace);
     
     // Score all targets
     const finalResults = scoredTargets.map(result => {
@@ -663,8 +853,9 @@ const ASIN_DATABASE = {
   }
 };
 
-async function fetchTargetAsinWithCache(asin) {
-  const cacheKey = asin;
+async function fetchTargetAsinWithCache(asin, marketplace = DEFAULT_MARKETPLACE) {
+  const normalizedMarketplace = normalizeMarketplaceCode(marketplace);
+  const cacheKey = `${normalizedMarketplace}:${asin}`;
   const cached = productCache.get(cacheKey);
   
   // Check cache first
@@ -738,7 +929,7 @@ async function fetchTargetAsinWithCache(asin) {
   // Try Helium API only after instant fallbacks
   try {
     console.log(`Trying Helium API for ASIN ${asin}...`);
-    const heliumResult = await fetchFromHeliumAPI(asin);
+    const heliumResult = await fetchFromHeliumAPI(asin, normalizedMarketplace);
     if (heliumResult && heliumResult.title) {
       console.log(`Helium API success for ASIN ${asin}: ${heliumResult.title}`);
       const targetProduct = {
@@ -764,8 +955,10 @@ async function fetchTargetAsinWithCache(asin) {
   }
 
   // Fetch with timeout for non-hardcoded ASINs
-  const url = `https://www.amazon.in/dp/${asin}`;
-  const targetProduct = await fetchProductDetailsWithTimeout(url, 4500);
+  const url = buildMarketplaceProductUrl(asin, normalizedMarketplace);
+  const targetProduct = await fetchProductDetailsWithTimeout(url, 4500, {
+    marketplace: normalizedMarketplace,
+  });
   
   // Cache the result
   productCache.set(cacheKey, {
@@ -854,7 +1047,7 @@ function persistProduct(key, product) {
   }
 }
 
-async function fetchTargetAsinBatch(targetAsins) {
+async function fetchTargetAsinBatch(targetAsins, marketplace = DEFAULT_MARKETPLACE) {
   const results = new Array(targetAsins.length);
   const concurrency = Math.min(3, Math.max(1, targetAsins.length));
   let cursor = 0;
@@ -868,7 +1061,7 @@ async function fetchTargetAsinBatch(targetAsins) {
       setAsinStatus(`Fetching target ASIN ${currentIndex + 1} of ${targetAsins.length}: ${asin}`);
 
       try {
-        results[currentIndex] = await fetchTargetAsinWithCache(asin);
+        results[currentIndex] = await fetchTargetAsinWithCache(asin, marketplace);
       } catch (error) {
         results[currentIndex] = {
           asin,
@@ -886,12 +1079,15 @@ async function fetchTargetAsinBatch(targetAsins) {
   return results;
 }
 
-async function fetchProductDetailsWithTimeout(url, timeout = 4500) {
+async function fetchProductDetailsWithTimeout(url, timeout = 4500, options = {}) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
   
   try {
-    const result = await fetchProductDetails(url, timeout, { preferFast: true });
+    const result = await fetchProductDetails(url, timeout, {
+      ...options,
+      preferFast: true,
+    });
     clearTimeout(timeoutId);
     return result;
   } catch (error) {
@@ -1482,16 +1678,21 @@ function refineReason(score, reason, keyword, matchedTokens) {
 }
 
 async function fetchProductDetails(url, timeout = 12000, options = {}) {
-  const normalizedUrl = normalizeUrl(url);
+  const marketplace = normalizeMarketplaceCode(
+    options.marketplace || inferMarketplaceFromInput(url) || DEFAULT_MARKETPLACE
+  );
+  const normalizedUrl = normalizeUrl(url, marketplace);
   const asinMatch = normalizedUrl.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
   const asin = asinMatch ? asinMatch[1].toUpperCase() : "";
   const preferFast = Boolean(options.preferFast);
+  const amazonHost = getMarketplaceHost(marketplace);
 
   try {
     const backendProduct = await fetchProductDetailsFromBackend({
       asin,
       url: normalizedUrl,
       timeout,
+      marketplace,
     });
 
     if (backendProduct && hasUsableProductTitle(backendProduct.title)) {
@@ -1523,7 +1724,7 @@ async function fetchProductDetails(url, timeout = 12000, options = {}) {
     },
     {
       name: "Direct Jina",
-      url: `https://r.jina.ai/http://www.amazon.in/dp/${asin}`,
+      url: `https://r.jina.ai/http://${amazonHost.replace(/^https?:\/\//i, "")}/dp/${asin}`,
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
     }
   ];
@@ -1532,17 +1733,17 @@ async function fetchProductDetails(url, timeout = 12000, options = {}) {
   const amazonSearchProviders = [
     {
       name: "Amazon Search",
-      url: `https://r.jina.ai/http://www.amazon.in/s?k=${asin}&ref=nb_sb_noss`,
+      url: `https://r.jina.ai/http://${amazonHost.replace(/^https?:\/\//i, "")}/s?k=${asin}&ref=nb_sb_noss`,
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
     },
     {
       name: "Amazon Mobile Search",
-      url: `https://r.jina.ai/http://www.amazon.in/s?k=${asin}&i=mobile&ref=nb_sb_noss`,
+      url: `https://r.jina.ai/http://${amazonHost.replace(/^https?:\/\//i, "")}/s?k=${asin}&i=mobile&ref=nb_sb_noss`,
       headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15' }
     },
     {
       name: "Amazon Books Search",
-      url: `https://r.jina.ai/http://www.amazon.in/s?k=${asin}&i=books&ref=nb_sb_noss`,
+      url: `https://r.jina.ai/http://${amazonHost.replace(/^https?:\/\//i, "")}/s?k=${asin}&i=books&ref=nb_sb_noss`,
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
     }
   ];
@@ -1668,7 +1869,7 @@ async function fetchProductDetails(url, timeout = 12000, options = {}) {
   // Manual ASIN lookup as final fallback
   if (!bestResult && asin) {
     console.log('Trying manual ASIN lookup...');
-    const manualResult = await manualAsinLookup(asin);
+    const manualResult = await manualAsinLookup(asin, marketplace);
     if (manualResult) {
       return manualResult;
     }
@@ -1687,7 +1888,7 @@ async function fetchProductDetails(url, timeout = 12000, options = {}) {
   };
 }
 
-async function fetchProductDetailsFromBackend({ asin, url, timeout }) {
+async function fetchProductDetailsFromBackend({ asin, url, timeout, marketplace }) {
   if (window.location.protocol === "file:") {
     throw new Error("Backend route unavailable from file protocol");
   }
@@ -1701,6 +1902,8 @@ async function fetchProductDetailsFromBackend({ asin, url, timeout }) {
   } else if (url) {
     params.set("url", url);
   }
+
+  params.set("marketplace", normalizeMarketplaceCode(marketplace));
 
   try {
     const response = await fetch(`/api/fetch-product?${params.toString()}`, {
@@ -1728,7 +1931,7 @@ async function fetchProductDetailsFromBackend({ asin, url, timeout }) {
 }
 
 // Helium API integration for real Amazon product data
-async function fetchFromHeliumAPI(asin) {
+async function fetchFromHeliumAPI(asin, marketplace = DEFAULT_MARKETPLACE) {
   // Note: User needs to provide their Helium API key
   const apiKey = ''; // User should add their Helium API key here
   
@@ -1738,7 +1941,7 @@ async function fetchFromHeliumAPI(asin) {
 
   try {
     // Helium API endpoint for Amazon product data
-    const heliumUrl = `https://api.helium10.com/product-data?asin=${asin}&marketplace=amazon.in`;
+    const heliumUrl = `https://api.helium10.com/product-data?asin=${asin}&marketplace=${new URL(getMarketplaceHost(marketplace)).host}`;
     
     const response = await fetch(heliumUrl, {
       method: 'GET',
@@ -1774,10 +1977,10 @@ async function fetchFromHeliumAPI(asin) {
 }
 
 // Manual ASIN lookup as final fallback
-async function manualAsinLookup(asin) {
+async function manualAsinLookup(asin, marketplace = DEFAULT_MARKETPLACE) {
   try {
     // Try to get basic product info from Amazon's product API
-    const amazonUrl = `https://www.amazon.in/dp/${asin}`;
+    const amazonUrl = buildMarketplaceProductUrl(asin, marketplace);
     
     // Try a simple fetch to see if the product exists
     const response = await fetch(`https://r.jina.ai/http://${amazonUrl.replace(/^https?:\/\//i, "")}`, {
@@ -1922,12 +2125,31 @@ function scoreExtractionQuality(extractedData) {
   return score;
 }
 
-function normalizeUrl(url) {
-  if (/^https?:\/\//i.test(url)) {
-    return url;
+function normalizeUrl(url, marketplace = DEFAULT_MARKETPLACE) {
+  const rawUrl = String(url || "").trim();
+
+  if (!rawUrl) {
+    return "";
   }
 
-  return `https://${url}`;
+  if (/^[A-Z0-9]{10}$/i.test(rawUrl)) {
+    return buildMarketplaceProductUrl(rawUrl, marketplace);
+  }
+
+  if (/^https?:\/\//i.test(rawUrl)) {
+    return rawUrl;
+  }
+
+  if (/amazon\./i.test(rawUrl)) {
+    return `https://${rawUrl.replace(/^\/+/, "")}`;
+  }
+
+  const asin = extractAsinFromInput(rawUrl);
+  if (asin) {
+    return buildMarketplaceProductUrl(asin, marketplace);
+  }
+
+  return `https://${rawUrl}`;
 }
 
 function extractProductDetails(rawText, url, sourceName) {

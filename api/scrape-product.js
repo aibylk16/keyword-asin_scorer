@@ -1,4 +1,23 @@
-const AMAZON_HOST = "https://www.amazon.in";
+const MARKETPLACE_MAP = {
+  IN: "https://www.amazon.in",
+  US: "https://www.amazon.com",
+  CA: "https://www.amazon.ca",
+  AU: "https://www.amazon.com.au",
+  UK: "https://www.amazon.co.uk",
+  DE: "https://www.amazon.de",
+  FR: "https://www.amazon.fr",
+  IT: "https://www.amazon.it",
+  ES: "https://www.amazon.es",
+  PL: "https://www.amazon.pl",
+};
+const MARKETPLACE_HOST_TO_CODE = Object.entries(MARKETPLACE_MAP).reduce(
+  (map, [code, host]) => {
+    map[new URL(host).host] = code;
+    return map;
+  },
+  {}
+);
+const DEFAULT_MARKETPLACE = "IN";
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -16,8 +35,10 @@ export default async function handler(request, response) {
   }
 
   const asin = normalizeAsin(request.query.asin);
+  const marketplace = normalizeMarketplace(request.query.marketplace);
   const requestedUrl = typeof request.query.url === "string" ? request.query.url.trim() : "";
-  const productUrl = asin ? `${AMAZON_HOST}/dp/${asin}` : normalizeUrl(requestedUrl);
+  const amazonHost = getAmazonHost(marketplace, requestedUrl);
+  const productUrl = asin ? `${amazonHost}/dp/${asin}` : normalizeUrl(requestedUrl, amazonHost);
 
   if (!asin && !productUrl) {
     response.status(400).json({ error: "Provide a valid ASIN or Amazon URL" });
@@ -25,7 +46,7 @@ export default async function handler(request, response) {
   }
 
   try {
-    const product = await scrapeAmazonProduct(productUrl, asin);
+    const product = await scrapeAmazonProduct(productUrl, asin, amazonHost);
     response.status(200).json(product);
   } catch (error) {
     response.status(502).json({
@@ -44,21 +65,53 @@ function normalizeAsin(value) {
   return /^[A-Z0-9]{10}$/.test(cleaned) ? cleaned : "";
 }
 
-function normalizeUrl(value) {
+function normalizeMarketplace(value) {
+  const code = String(value || "").trim().toUpperCase();
+  return MARKETPLACE_MAP[code] ? code : DEFAULT_MARKETPLACE;
+}
+
+function inferMarketplaceFromUrl(value) {
+  try {
+    const normalized = /^https?:\/\//i.test(String(value || "").trim())
+      ? String(value || "").trim()
+      : `https://${String(value || "").trim()}`;
+    const hostname = new URL(normalized).hostname.toLowerCase();
+    return MARKETPLACE_HOST_TO_CODE[hostname] || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function getAmazonHost(marketplace, requestedUrl = "") {
+  const inferred = inferMarketplaceFromUrl(requestedUrl);
+  return MARKETPLACE_MAP[inferred || normalizeMarketplace(marketplace)];
+}
+
+function normalizeUrl(value, amazonHost = MARKETPLACE_MAP[DEFAULT_MARKETPLACE]) {
   if (!value) {
     return "";
   }
 
-  if (/^https?:\/\//i.test(value)) {
-    return value;
+  const trimmed = String(value).trim();
+
+  if (/^[A-Z0-9]{10}$/i.test(trimmed)) {
+    return `${amazonHost}/dp/${trimmed.toUpperCase()}`;
   }
 
-  return `https://${value}`;
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (/amazon\./i.test(trimmed)) {
+    return `https://${trimmed.replace(/^\/+/, "")}`;
+  }
+
+  return `https://${trimmed}`;
 }
 
-async function scrapeAmazonProduct(url, fallbackAsin = "") {
+async function scrapeAmazonProduct(url, fallbackAsin = "", amazonHost = MARKETPLACE_MAP[DEFAULT_MARKETPLACE]) {
   const asin = fallbackAsin || extractAsin(url);
-  const attempts = buildAttempts(url, asin);
+  const attempts = buildAttempts(url, asin, amazonHost);
   let bestProduct = null;
   let bestScore = -1;
   let lastError = null;
@@ -92,11 +145,11 @@ async function scrapeAmazonProduct(url, fallbackAsin = "") {
   throw lastError || new Error("No usable product details were extracted");
 }
 
-function buildAttempts(url, asin) {
+function buildAttempts(url, asin, amazonHost) {
   const directUrl = url;
-  const mobileUrl = asin ? `${AMAZON_HOST}/gp/aw/d/${asin}` : url;
-  const searchUrl = asin ? `${AMAZON_HOST}/s?k=${asin}` : "";
-  const mirrorBase = asin ? `${AMAZON_HOST}/dp/${asin}` : url;
+  const mobileUrl = asin ? `${amazonHost}/gp/aw/d/${asin}` : url;
+  const searchUrl = asin ? `${amazonHost}/s?k=${asin}` : "";
+  const mirrorBase = asin ? `${amazonHost}/dp/${asin}` : url;
   const mirrorUrl = `https://r.jina.ai/http://${mirrorBase.replace(/^https?:\/\//i, "")}`;
 
   return [
@@ -161,6 +214,7 @@ async function fetchAttempt(attempt) {
 
 function parseHtmlProduct(html, fallbackAsin = "", sourceName = "Amazon", url = "") {
   const asin = fallbackAsin || extractAsin(url) || extractAsin(html);
+  const canonicalHost = getAmazonHost(DEFAULT_MARKETPLACE, url);
   const title = extractTitleFromHtml(html);
   const bulletPoints = extractBulletPointsFromHtml(html);
   const description = extractDescriptionFromHtml(html, bulletPoints);
@@ -172,7 +226,7 @@ function parseHtmlProduct(html, fallbackAsin = "", sourceName = "Amazon", url = 
   return {
     sourceName,
     asin,
-    url: asin ? `${AMAZON_HOST}/dp/${asin}` : url,
+    url: asin ? `${canonicalHost}/dp/${asin}` : url,
     title,
     bulletPoints,
     productDescription: description,
@@ -185,6 +239,7 @@ function parseHtmlProduct(html, fallbackAsin = "", sourceName = "Amazon", url = 
 
 function parseMirrorProduct(text, fallbackAsin = "", sourceName = "Jina Mirror", url = "") {
   const asin = fallbackAsin || extractAsin(url) || extractAsin(text);
+  const canonicalHost = getAmazonHost(DEFAULT_MARKETPLACE, url);
   const lines = String(text || "")
     .replace(/\r/g, "")
     .split("\n")
@@ -202,7 +257,7 @@ function parseMirrorProduct(text, fallbackAsin = "", sourceName = "Jina Mirror",
   return {
     sourceName,
     asin,
-    url: asin ? `${AMAZON_HOST}/dp/${asin}` : url,
+    url: asin ? `${canonicalHost}/dp/${asin}` : url,
     title,
     bulletPoints,
     productDescription: description,
@@ -523,7 +578,7 @@ function looksLikeNoise(value) {
     "markdown content",
     "if lt ie",
     "endif",
-    "amazon.in",
+    "amazon.",
     "skip to main content",
     "results for",
   ];

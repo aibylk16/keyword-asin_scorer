@@ -26,12 +26,35 @@
       <section class="workspace">
         <form class="panel panel-form" id="score-form" novalidate>
           <div class="field">
-            <label for="product-url">Product URL</label>
+            <label for="keyword-marketplace">Marketplace</label>
+            <p class="field-note">
+              Choose the marketplace base URL. Current base:
+              <code id="keyword-marketplace-base">https://www.amazon.in/dp/</code>
+            </p>
+            <select id="keyword-marketplace" name="keywordMarketplace">
+              <option value="IN" selected>IN</option>
+              <option value="US">US</option>
+              <option value="CA">CA</option>
+              <option value="AU">AU</option>
+              <option value="UK">UK</option>
+              <option value="DE">DE</option>
+              <option value="FR">FR</option>
+              <option value="IT">IT</option>
+              <option value="ES">ES</option>
+              <option value="PL">PL</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="product-url">Product URL / ASIN</label>
+            <p class="field-note">
+              Paste either a plain ASIN like <code>B0F269WYKG</code> or a full Amazon product link.
+            </p>
             <input
               id="product-url"
               name="productUrl"
-              type="url"
-              placeholder="Example: https://www.amazon.in/dp/B0F269WYKG"
+              type="text"
+              placeholder="Example: B0F269WYKG or https://www.amazon.in/dp/B0F269WYKG"
             />
           </div>
 

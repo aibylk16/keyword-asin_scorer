@@ -26,10 +26,30 @@
       <section class="workspace">
         <form class="panel panel-form" id="scrap-form" novalidate>
           <div class="field">
+            <label for="scrap-marketplace">Marketplace</label>
+            <p class="field-note">
+              Choose the marketplace base URL. Current base:
+              <code id="scrap-marketplace-base">https://www.amazon.in/dp/</code>
+            </p>
+            <select id="scrap-marketplace" name="scrapMarketplace">
+              <option value="IN" selected>IN</option>
+              <option value="US">US</option>
+              <option value="CA">CA</option>
+              <option value="AU">AU</option>
+              <option value="UK">UK</option>
+              <option value="DE">DE</option>
+              <option value="FR">FR</option>
+              <option value="IT">IT</option>
+              <option value="ES">ES</option>
+              <option value="PL">PL</option>
+            </select>
+          </div>
+
+          <div class="field">
             <label for="scrap-asins">ASIN / Amazon URL Input</label>
             <p class="field-note">
               Paste one ASIN or Amazon link per line. The app auto-builds the URL as
-              <code>https://www.amazon.in/dp/{ASIN}</code>.
+              <code id="scrap-marketplace-template">https://www.amazon.in/dp/{ASIN}</code>.
             </p>
             <textarea
               id="scrap-asins"

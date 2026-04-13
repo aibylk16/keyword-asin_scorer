@@ -33,6 +33,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -285,6 +286,7 @@ p {
 }
 
 .field input,
+.field select,
 .field textarea,
 #markdown-output {
   width: 100%;
@@ -297,6 +299,7 @@ p {
 }
 
 .field input:focus,
+.field select:focus,
 .field textarea:focus,
 .button:focus,
 #markdown-output:focus {
