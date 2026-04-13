@@ -140,6 +140,8 @@ p {
   display: grid;
   gap: 10px;
   padding: 28px;
+  min-height: 280px;
+  align-content: start;
   text-decoration: none;
   color: inherit;
   transition:
@@ -157,11 +159,16 @@ p {
 
 .tool-card h2 {
   font-size: clamp(1.4rem, 3vw, 2rem);
+  min-height: 2.5em;
 }
 
 .tool-card p:last-child {
   color: var(--muted);
   font-size: 1rem;
+}
+
+.help-chat {
+  display: none !important;
 }
 
 .scrap-card-grid {
