@@ -118,7 +118,7 @@ p {
 }
 
 .workspace-cards {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
 .panel {
@@ -161,6 +161,99 @@ p {
 .tool-card p:last-child {
   color: var(--muted);
   font-size: 1rem;
+}
+
+.scrap-card-grid {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.scrap-card {
+  padding: 20px;
+  display: grid;
+  gap: 16px;
+}
+
+.scrap-empty-card {
+  padding: 20px;
+  border: 1px dashed rgba(24, 33, 41, 0.18);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--muted);
+}
+
+.scrap-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.scrap-card-header h2 {
+  font-size: 1.15rem;
+  line-height: 1.2;
+}
+
+.scrap-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.scrap-meta-grid article,
+.scrap-section {
+  display: grid;
+  gap: 6px;
+}
+
+.scrap-meta-grid strong,
+.scrap-section strong {
+  font-size: 0.9rem;
+}
+
+.scrap-meta-grid span,
+.scrap-section p,
+.scrap-section li {
+  color: var(--muted);
+}
+
+.scrap-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+
+.scrap-status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 88px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.88rem;
+}
+
+.scrap-status-queued {
+  background: rgba(93, 103, 113, 0.14);
+  color: #40505c;
+}
+
+.scrap-status-fetching {
+  background: rgba(244, 162, 89, 0.18);
+  color: #8a4f12;
+}
+
+.scrap-status-success {
+  background: rgba(15, 118, 110, 0.16);
+  color: var(--accent-dark);
+}
+
+.scrap-status-failed {
+  background: rgba(180, 83, 9, 0.14);
+  color: var(--danger);
 }
 
 .panel-form {
@@ -459,6 +552,11 @@ td:nth-child(2) {
   color: #e9fff8;
 }
 
+#scrap-export-output {
+  background: #10211f;
+  color: #e9fff8;
+}
+
 .rubric-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -504,6 +602,10 @@ td:nth-child(2) {
     grid-template-columns: 1fr;
   }
 
+  .scrap-meta-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .panel-form {
     position: static;
   }
@@ -538,6 +640,12 @@ td:nth-child(2) {
 
   .fetched-grid {
     grid-template-columns: 1fr;
+  }
+
+  .scrap-card-header,
+  .scrap-meta-grid {
+    grid-template-columns: 1fr;
+    display: grid;
   }
 
   .button,

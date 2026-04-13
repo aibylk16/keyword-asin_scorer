@@ -29,12 +29,20 @@
       "dest": "/api/fetch-product.js"
     },
     {
+      "src": "/api/scrape-product",
+      "dest": "/api/scrape-product.js"
+    },
+    {
       "src": "/keyword",
       "dest": "/keyword.html"
     },
     {
       "src": "/asin",
       "dest": "/asin.html"
+    },
+    {
+      "src": "/product-details-scrap",
+      "dest": "/product-details-scrap.html"
     },
     {
       "handle": "filesystem"
