@@ -231,12 +231,16 @@
               />
             </div>
 
-            <div class="field">
-              <label for="target-asin-list">Target ASIN List</label>
-                <textarea
-                  id="target-asin-list"
-                  name="targetAsinList"
-                  rows="12"
+              <div class="field">
+                <label for="target-asin-list">Target ASIN List</label>
+                <p class="field-note">
+                  Paste either plain ASINs like <code>B086PV1KWJ</code> or full Amazon links like
+                  <code>https://www.amazon.in/dp/B086PV1KWJ</code>.
+                </p>
+                  <textarea
+                    id="target-asin-list"
+                    name="targetAsinList"
+                    rows="12"
                   placeholder="Enter one ASIN or Amazon product URL per line, or paste comma-separated values"
                 ></textarea>
               </div>
