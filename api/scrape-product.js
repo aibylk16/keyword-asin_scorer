@@ -171,7 +171,8 @@ async function fetchAttempt(attempt) {
   for (const userAgent of userAgents) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4500);
+      const timeoutMs = attempt.kind === "mirror" ? 15000 : 6000;
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       const result = await fetch(attempt.url, {
         headers: {
@@ -496,16 +497,31 @@ function extractDealStatusFromHtml(html) {
 }
 
 function extractTitleFromMirror(lines) {
-  for (const line of lines) {
-    const title = cleanAmazonTitle(line);
+  const targetedPatterns = [
+    /^Title:\s*(.+)$/i,
+    /^#\s*Product Summary:\s*(.+)$/i,
+    /^Product Summary:\s*(.+)$/i,
+    /^#\s*Amazon\.[^:]+:\s*(.+)$/i,
+  ];
 
-    if (
-      title.length >= 18 &&
-      title.length <= 280 &&
-      !looksLikeNoise(title) &&
-      !title.toLowerCase().startsWith("url source") &&
-      !title.toLowerCase().startsWith("markdown content")
-    ) {
+  for (const line of lines) {
+    for (const pattern of targetedPatterns) {
+      const match = line.match(pattern);
+      if (!match?.[1]) {
+        continue;
+      }
+
+      const candidate = normalizeMirrorTitleCandidate(match[1]);
+      if (isUsableMirrorTitle(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
+  for (const line of lines) {
+    const title = normalizeMirrorTitleCandidate(line);
+
+    if (isUsableMirrorTitle(title)) {
       return title;
     }
   }
@@ -666,9 +682,47 @@ function isUsableBullet(value) {
   );
 }
 
+function isUsableTitle(value) {
+  const title = cleanAmazonTitle(value);
+  const normalized = title.toLowerCase();
+  return (
+    title.length >= 12 &&
+    title.length <= 280 &&
+    !looksLikeNoise(title) &&
+    !normalized.startsWith("url source") &&
+    !normalized.startsWith("markdown content") &&
+    !normalized.startsWith("product summary presents") &&
+    !normalized.startsWith("skip to")
+  );
+}
+
 function isUsableDescription(value) {
   const text = cleanText(value);
   return text.length >= 30 && text.length <= 1200 && !looksLikeNoise(text);
+}
+
+function isUsableMirrorTitle(value) {
+  const normalized = String(value || "").toLowerCase();
+  return (
+    isUsableTitle(value) &&
+    !normalized.startsWith("amazon.com") &&
+    !normalized.startsWith("one-time purchase") &&
+    !normalized.startsWith("subscribe") &&
+    !normalized.startsWith("added to cart") &&
+    !normalized.startsWith("price") &&
+    !normalized.startsWith("feedback")
+  );
+}
+
+function normalizeMirrorTitleCandidate(value) {
+  return cleanAmazonTitle(
+    String(value || "")
+      .replace(/^Title:\s*/i, "")
+      .replace(/^#\s*/, "")
+      .replace(/^Product Summary:\s*/i, "")
+      .replace(/^Amazon\.[^:]+:\s*/i, "")
+      .trim()
+  );
 }
 
 function cleanAmazonTitle(value) {
