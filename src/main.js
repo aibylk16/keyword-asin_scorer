@@ -93,6 +93,11 @@ const ASIN_SAMPLE_DATA = {
 initializeApp();
 
 function initializeApp() {
+  initializeKeywordTool();
+  initializeAsinTool();
+}
+
+function initializeKeywordTool() {
   if (
     !form ||
     !productUrlInput ||
@@ -175,7 +180,6 @@ function initializeApp() {
 
   renderFetchedContext(null);
   renderEmptyState();
-  initializeAsinTool();
 }
 
 function initializeAsinTool() {

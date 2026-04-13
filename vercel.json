@@ -29,6 +29,14 @@
       "dest": "/api/fetch-product.js"
     },
     {
+      "src": "/keyword",
+      "dest": "/keyword.html"
+    },
+    {
+      "src": "/asin",
+      "dest": "/asin.html"
+    },
+    {
       "handle": "filesystem"
     },
     {
