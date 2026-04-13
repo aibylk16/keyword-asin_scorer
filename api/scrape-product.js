@@ -222,6 +222,8 @@ function parseHtmlProduct(html, fallbackAsin = "", sourceName = "Amazon", url = 
   const numberOfReviews = extractReviewCountFromHtml(html);
   const rating = extractRatingFromHtml(html);
   const backendKeywords = extractBackendKeywordsFromHtml(html);
+  const buyBoxWinner = extractBuyBoxWinnerFromHtml(html);
+  const dealStatus = extractDealStatusFromHtml(html);
 
   return {
     sourceName,
@@ -233,6 +235,8 @@ function parseHtmlProduct(html, fallbackAsin = "", sourceName = "Amazon", url = 
     sellingPrice,
     numberOfReviews,
     rating,
+    buyBoxWinner,
+    dealStatus,
     backendKeywords,
   };
 }
@@ -253,6 +257,8 @@ function parseMirrorProduct(text, fallbackAsin = "", sourceName = "Jina Mirror",
   const numberOfReviews = extractReviewCountFromText(text);
   const rating = extractRatingFromText(text);
   const backendKeywords = extractBackendKeywordsFromText(text);
+  const buyBoxWinner = extractBuyBoxWinnerFromText(text, lines);
+  const dealStatus = extractDealStatusFromText(text, lines);
 
   return {
     sourceName,
@@ -264,6 +270,8 @@ function parseMirrorProduct(text, fallbackAsin = "", sourceName = "Jina Mirror",
     sellingPrice,
     numberOfReviews,
     rating,
+    buyBoxWinner,
+    dealStatus,
     backendKeywords,
   };
 }
@@ -435,6 +443,54 @@ function extractBackendKeywordsFromHtml(html) {
   return [];
 }
 
+function extractBuyBoxWinnerFromHtml(html) {
+  const sellerPatterns = [
+    /<div[^>]*id=["']merchantInfoFeature_feature_div["'][^>]*>([\s\S]*?)<\/div>/i,
+    /<div[^>]*id=["']merchant-info["'][^>]*>([\s\S]*?)<\/div>/i,
+    /<span[^>]*id=["']sellerProfileTriggerId["'][^>]*>([\s\S]*?)<\/span>/i,
+    /<a[^>]*id=["']sellerProfileTriggerId["'][^>]*>([\s\S]*?)<\/a>/i,
+  ];
+
+  for (const pattern of sellerPatterns) {
+    const match = html.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const cleaned = cleanText(match[1]);
+    const extracted = extractSellerName(cleaned);
+    if (extracted) {
+      return extracted;
+    }
+  }
+
+  const inlineSellerMatches = [
+    /sold by\s*<\/span>\s*<a[^>]*>([\s\S]*?)<\/a>/i,
+    /sold by\s*<a[^>]*>([\s\S]*?)<\/a>/i,
+    /ships from and sold by\s*([\w\s&.,'()-]+)/i,
+    /dispatches from and sold by\s*([\w\s&.,'()-]+)/i,
+  ];
+
+  for (const pattern of inlineSellerMatches) {
+    const match = html.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const seller = cleanText(match[1]).replace(/\.$/, "").trim();
+    if (isUsableSellerName(seller)) {
+      return seller;
+    }
+  }
+
+  return "";
+}
+
+function extractDealStatusFromHtml(html) {
+  const text = cleanText(html);
+  return extractDealStatusFromText(text);
+}
+
 function extractTitleFromMirror(lines) {
   for (const line of lines) {
     const title = cleanAmazonTitle(line);
@@ -494,6 +550,108 @@ function extractBackendKeywordsFromText(text) {
     .slice(0, 20);
 }
 
+function extractBuyBoxWinnerFromText(text, lines = []) {
+  const textBlock = [String(text || ""), ...(lines || [])].join("\n");
+  const patterns = [
+    /ships from and sold by\s+([^\n.]+)/i,
+    /dispatches from and sold by\s+([^\n.]+)/i,
+    /sold by\s+([^\n|]+)/i,
+    /seller\s*:\s*([^\n|]+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = textBlock.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const seller = cleanText(match[1]).replace(/\.$/, "").trim();
+    if (isUsableSellerName(seller)) {
+      return seller;
+    }
+  }
+
+  return "";
+}
+
+function extractDealStatusFromText(text, lines = []) {
+  const textBlock = [String(text || ""), ...(lines || [])].join("\n");
+  const dealPatterns = [
+    /limited time deal[:\s-]*([^\n.]+)/i,
+    /deal of the day[:\s-]*([^\n.]+)/i,
+    /lightning deal[:\s-]*([^\n.]+)/i,
+    /coupon[:\s-]*([^\n.]+)/i,
+    /(save\s+[₹$€£]?\s?[\d,.]+[^\n.]*)/i,
+    /((?:extra|instant)\s+\d+%[^\n.]*(?:off|discount))/i,
+    /(\d+%\s+off[^\n.]*)/i,
+  ];
+
+  for (const pattern of dealPatterns) {
+    const match = textBlock.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const dealText = cleanText(match[1]).replace(/\.$/, "").trim();
+    if (dealText && !looksLikeNoise(dealText)) {
+      return `Active deal detected: ${dealText}`;
+    }
+  }
+
+  return "";
+}
+
+function extractSellerName(value) {
+  const normalized = cleanText(value);
+  const patterns = [
+    /ships from and sold by\s+(.+)/i,
+    /dispatches from and sold by\s+(.+)/i,
+    /sold by\s+(.+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const seller = match[1].replace(/\.$/, "").trim();
+    if (isUsableSellerName(seller)) {
+      return seller;
+    }
+  }
+
+  if (isUsableSellerName(normalized)) {
+    return normalized;
+  }
+
+  return "";
+}
+
+function isUsableSellerName(value) {
+  const seller = cleanText(value)
+    .replace(/^(ships from and )?sold by\s+/i, "")
+    .replace(/^(dispatches from and )?sold by\s+/i, "")
+    .trim();
+
+  if (!seller || seller.length < 2 || seller.length > 120) {
+    return false;
+  }
+
+  const normalized = seller.toLowerCase();
+  if (
+    looksLikeNoise(seller) ||
+    normalized.includes("buy now") ||
+    normalized.includes("add to cart") ||
+    normalized.includes("amazon") ||
+    normalized.includes("details")
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 function isUsableBullet(value) {
   const text = cleanText(value);
   return (
@@ -543,6 +701,14 @@ function scoreProductCompleteness(product) {
 
   if (product.rating) {
     score += 1;
+  }
+
+  if (product.buyBoxWinner) {
+    score += 2;
+  }
+
+  if (product.dealStatus) {
+    score += 2;
   }
 
   if ((product.backendKeywords || []).length) {

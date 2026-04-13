@@ -132,12 +132,11 @@ async function handleScrapSubmit(event) {
     status: item.valid ? "queued" : "failed",
     sourceName: "",
     title: "",
-    bulletPoints: [],
-    productDescription: "",
     sellingPrice: "",
     numberOfReviews: "",
     rating: "",
-    backendKeywords: [],
+    buyBoxWinner: "",
+    dealStatus: "",
     errorMessage: item.valid ? "" : "Invalid ASIN or Amazon URL.",
   }));
 
@@ -203,12 +202,11 @@ async function fetchScrapItem(item) {
         status: "success",
         sourceName: data.sourceName || "Scrape API",
         title: data.title || "",
-        bulletPoints: Array.isArray(data.bulletPoints) ? data.bulletPoints : [],
-        productDescription: data.productDescription || "",
         sellingPrice: data.sellingPrice || "",
         numberOfReviews: data.numberOfReviews || "",
         rating: data.rating || "",
-        backendKeywords: Array.isArray(data.backendKeywords) ? data.backendKeywords : [],
+        buyBoxWinner: data.buyBoxWinner || "",
+        dealStatus: data.dealStatus || "",
         errorMessage: "",
       };
     } catch (error) {
@@ -354,6 +352,8 @@ function renderScrapResults(rows) {
           <td>${escapeHtml(row.sellingPrice || "-")}</td>
           <td>${escapeHtml(row.rating || "-")}</td>
           <td>${escapeHtml(row.numberOfReviews || "-")}</td>
+          <td>${escapeHtml(row.buyBoxWinner || "Buy Box not available")}</td>
+          <td>${escapeHtml(row.dealStatus || "No active deal detected")}</td>
         </tr>
       `
     )
@@ -392,16 +392,12 @@ function renderScrapResults(rows) {
             <p>${row.url ? `<a href="${escapeHtml(row.url)}" target="_blank" rel="noreferrer">${escapeHtml(row.url)}</a>` : "-"}</p>
           </div>
           <div class="scrap-section">
-            <strong>Bullet Points</strong>
-            ${row.bulletPoints?.length ? `<ul class="scrap-list">${row.bulletPoints.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : `<p>${escapeHtml(row.status === "failed" ? row.errorMessage || "Not available" : "Not available")}</p>`}
+            <strong>Buy Box Winner</strong>
+            <p>${escapeHtml(row.buyBoxWinner || "Buy Box not available")}</p>
           </div>
           <div class="scrap-section">
-            <strong>Product Description</strong>
-            <p>${escapeHtml(row.productDescription || (row.status === "failed" ? row.errorMessage || "Not available" : "Not available"))}</p>
-          </div>
-          <div class="scrap-section">
-            <strong>Backend Keywords</strong>
-            ${row.backendKeywords?.length ? `<ul class="scrap-list">${row.backendKeywords.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : `<p>Not available publicly.</p>`}
+            <strong>Deal Detection</strong>
+            <p>${escapeHtml(row.dealStatus || "No active deal detected")}</p>
           </div>
         </article>
       `
@@ -414,13 +410,13 @@ function renderScrapResults(rows) {
 function renderScrapEmptyState() {
   scrapResultsBody.innerHTML = `
     <tr class="empty-row">
-      <td colspan="6">Add ASINs and click <strong>Fetch Product Details</strong>.</td>
+      <td colspan="8">Add ASINs and click <strong>Fetch Product Details</strong>.</td>
     </tr>
   `;
   scrapSummaryCards.innerHTML = "";
   scrapCardGrid.innerHTML = `
     <article class="scrap-empty-card">
-      Product cards with bullet points, description, price, reviews, rating, and backend keywords will appear here.
+      Product cards with price, reviews, rating, Buy Box winner, and deal status will appear here.
     </article>
   `;
   scrapExportOutput.value = "";
@@ -447,12 +443,11 @@ function buildScrapCsv(rows) {
     "Source",
     "Product URL",
     "Product Title",
-    "Bullet Points",
-    "Product Description",
     "Selling Price",
     "Number of Reviews",
     "Rating",
-    "Backend Keywords",
+    "Buy Box Winner",
+    "Deal Status",
     "Error Message",
   ];
 
@@ -464,12 +459,11 @@ function buildScrapCsv(rows) {
       row.sourceName,
       row.url,
       row.title,
-      (row.bulletPoints || []).join(" | "),
-      row.productDescription,
       row.sellingPrice,
       row.numberOfReviews,
       row.rating,
-      (row.backendKeywords || []).join(" | "),
+      row.buyBoxWinner || "Buy Box not available",
+      row.dealStatus || "No active deal detected",
       row.errorMessage,
     ]),
   ];
