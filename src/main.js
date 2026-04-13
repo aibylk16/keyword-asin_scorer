@@ -652,10 +652,41 @@ function parseKeywords(input) {
 }
 
 function parseAsins(input) {
+  const seen = new Set();
+
   return input
     .split(/\n|,|\s+/)
-    .map((asin) => asin.trim().toUpperCase())
-    .filter((asin) => /^[A-Z0-9]{10}$/.test(asin));
+    .map((value) => extractAsinFromInput(value))
+    .filter((asin) => /^[A-Z0-9]{10}$/.test(asin))
+    .filter((asin) => {
+      if (seen.has(asin)) {
+        return false;
+      }
+
+      seen.add(asin);
+      return true;
+    });
+}
+
+function extractAsinFromInput(value) {
+  const cleaned = String(value || "").trim();
+
+  if (!cleaned) {
+    return "";
+  }
+
+  const directMatch = cleaned.toUpperCase();
+  if (/^[A-Z0-9]{10}$/.test(directMatch)) {
+    return directMatch;
+  }
+
+  const urlMatch = cleaned.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
+  if (urlMatch?.[1]) {
+    return urlMatch[1].toUpperCase();
+  }
+
+  const fallbackMatch = cleaned.match(/\b([A-Z0-9]{10})\b/i);
+  return fallbackMatch?.[1]?.toUpperCase() || "";
 }
 
 function normalizeText(value) {
