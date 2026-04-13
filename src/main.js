@@ -412,30 +412,7 @@ async function handleAsinSubmit(event) {
       return;
     }
 
-    const scoredTargets = [];
-
-    for (let index = 0; index < targetAsins.length; index += 1) {
-      const asin = targetAsins[index];
-      setAsinStatus(`Fetching target ASIN ${index + 1} of ${targetAsins.length}: ${asin}`);
-
-      try {
-        const result = await fetchTargetAsinWithCache(asin);
-        scoredTargets.push(result);
-      } catch (error) {
-        scoredTargets.push({
-          asin,
-          score: 3,
-          relevanceLabel: "Review",
-          reason: "Could not fetch target ASIN details clearly. Review this ASIN manually before excluding it.",
-          needsReview: true,
-          targetProduct: { title: "", highlights: [] },
-        });
-      }
-
-      if (index < targetAsins.length - 1) {
-        await delay(100);
-      }
-    }
+    const scoredTargets = await fetchTargetAsinBatch(targetAsins);
     
     // Score all targets
     const finalResults = scoredTargets.map(result => {
@@ -606,6 +583,38 @@ async function fetchTargetAsinWithCache(asin) {
     asin,
     targetProduct
   };
+}
+
+async function fetchTargetAsinBatch(targetAsins) {
+  const results = new Array(targetAsins.length);
+  const concurrency = Math.min(3, Math.max(1, targetAsins.length));
+  let cursor = 0;
+
+  async function worker() {
+    while (cursor < targetAsins.length) {
+      const currentIndex = cursor;
+      cursor += 1;
+
+      const asin = targetAsins[currentIndex];
+      setAsinStatus(`Fetching target ASIN ${currentIndex + 1} of ${targetAsins.length}: ${asin}`);
+
+      try {
+        results[currentIndex] = await fetchTargetAsinWithCache(asin);
+      } catch (error) {
+        results[currentIndex] = {
+          asin,
+          score: 3,
+          relevanceLabel: "Review",
+          reason: "Could not fetch target ASIN details clearly. Review this ASIN manually before excluding it.",
+          needsReview: true,
+          targetProduct: { title: "", highlights: [] },
+        };
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  return results;
 }
 
 async function fetchProductDetailsWithTimeout(url, timeout = 4500) {
