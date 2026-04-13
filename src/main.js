@@ -101,11 +101,13 @@ const CATEGORY_KEYWORDS = {
   jewelry: ["necklace", "bracelet", "ring", "earring", "pendant", "jewelry"],
   furniture: ["chair", "table", "sofa", "bed", "cabinet", "desk", "furniture"],
   automotive: ["car", "bike", "motorcycle", "vehicle", "automobile", "engine"],
+  ritual_vessels: ["lota", "lotta", "kalash", "chombu", "puja", "pooja", "water vessel", "drinking water", "milk vessel"],
 };
 
 const PRODUCT_TYPE_RULES = [
   { type: "water bottle", category: "kitchen", phrases: ["water bottle"], tokens: ["bottle", "flask", "thermos"] },
   { type: "lunch box", category: "kitchen", phrases: ["lunch box", "bento box"], tokens: ["lunch", "box", "tiffin", "bento"] },
+  { type: "lota vessel", category: "ritual_vessels", phrases: ["steel lota", "stainless steel lota", "steel kalash", "water lota", "puja lota"], tokens: ["lota", "lotta", "kalash", "chombu"] },
   { type: "throw blanket", category: "home_decor", phrases: ["throw blanket"], tokens: ["throw", "blanket", "quilt"] },
   { type: "handkerchief", category: "clothing", phrases: ["cotton handkerchief"], tokens: ["handkerchief", "hanky"] },
   { type: "underwear", category: "clothing", phrases: ["cotton hipster"], tokens: ["underwear", "hipster", "innerwear", "panty"] },
@@ -116,11 +118,109 @@ const PRODUCT_TYPE_RULES = [
   { type: "bag", category: "clothing", phrases: ["school bag"], tokens: ["bag", "backpack", "purse"] },
 ];
 
-const MATERIAL_SIGNALS = ["cotton", "steel", "stainless", "ceramic", "glass", "wood", "plastic", "bpa free", "metal", "silk", "leather"];
+const MATERIAL_SIGNALS = ["cotton", "steel", "stainless", "stainless steel", "304 grade", "ceramic", "glass", "wood", "plastic", "bpa free", "metal", "silk", "leather", "brass", "copper", "cooper", "tamba", "pital", "peetal", "kansa", "bronze"];
 const AUDIENCE_SIGNALS = ["women", "men", "kids", "children", "baby", "girls", "boys", "school"];
-const USE_CASE_SIGNALS = ["daily use", "travel", "gym", "office", "school", "bed", "sofa", "living room", "home decor", "kitchen", "personal use"];
-const FEATURE_SIGNALS = ["insulated", "leakproof", "woven", "floral", "pack", "soft", "absorbent", "decorative", "reusable", "hot cold"];
+const USE_CASE_SIGNALS = ["daily use", "travel", "gym", "office", "school", "bed", "sofa", "living room", "home decor", "kitchen", "personal use", "puja", "pooja", "drinking water", "water", "milk", "buttermilk"];
+const FEATURE_SIGNALS = ["insulated", "leakproof", "woven", "floral", "pack", "soft", "absorbent", "decorative", "reusable", "hot cold", "lid", "handle"];
 const VARIANT_SIGNALS = ["white", "black", "blue", "pink", "red", "green", "grey", "gray", "beige", "brown", "navy", "gold", "silver"];
+const MATERIAL_FAMILIES = {
+  steel: ["steel", "stainless", "stainless steel", "304 grade"],
+  brass: ["brass", "pital", "peetal"],
+  copper: ["copper", "cooper", "tamba"],
+  bronze: ["kansa", "bronze"],
+  plastic: ["plastic", "bpa free"],
+  ceramic: ["ceramic"],
+  glass: ["glass"],
+  wood: ["wood"],
+  fabric: ["cotton", "silk", "leather"],
+};
+const GENERIC_BRAND_WORDS = new Set([
+  "steel",
+  "stainless",
+  "cotton",
+  "ceramic",
+  "glass",
+  "wood",
+  "plastic",
+  "metal",
+  "brass",
+  "copper",
+  "tamba",
+  "pital",
+  "peetal",
+  "kansa",
+  "bronze",
+  "women",
+  "woman",
+  "men",
+  "man",
+  "kids",
+  "children",
+  "baby",
+  "girls",
+  "boys",
+  "school",
+  "daily",
+  "travel",
+  "gym",
+  "office",
+  "bed",
+  "sofa",
+  "home",
+  "decor",
+  "kitchen",
+  "personal",
+  "use",
+  "puja",
+  "pooja",
+  "drinking",
+  "water",
+  "milk",
+  "buttermilk",
+  "insulated",
+  "leakproof",
+  "woven",
+  "floral",
+  "pack",
+  "soft",
+  "absorbent",
+  "decorative",
+  "reusable",
+  "hot",
+  "cold",
+  "lid",
+  "handle",
+  "lota",
+  "lotta",
+  "kalash",
+  "chombu",
+  "bottle",
+  "flask",
+  "thermos",
+  "mug",
+  "cup",
+  "tiffin",
+  "lunch",
+  "box",
+  "bento",
+  "vase",
+  "planter",
+  "speaker",
+  "charger",
+  "adapter",
+  "shirt",
+  "tee",
+  "bag",
+  "backpack",
+  "purse",
+  "small",
+  "mini",
+  "big",
+  "best",
+  "set",
+  "grade",
+  "litre",
+]);
 
 initializeApp();
 
@@ -861,6 +961,12 @@ function extractAsinFromInput(value) {
 function normalizeText(value) {
   return value
     .toLowerCase()
+    .replace(/[’']/g, " ")
+    .replace(/\blotta\b/g, " lota ")
+    .replace(/\bpooja\b/g, " puja ")
+    .replace(/\bcooper\b/g, " copper ")
+    .replace(/\bltr\b/g, " litre ")
+    .replace(/\bliters?\b/g, " litre ")
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -1017,6 +1123,23 @@ function overlapItems(left, right) {
   return (left || []).filter((item) => rightSet.has(item));
 }
 
+function detectMaterialFamilies(materials = []) {
+  return Object.entries(MATERIAL_FAMILIES)
+    .filter(([, familySignals]) => overlapItems(materials, familySignals).length)
+    .map(([family]) => family);
+}
+
+function hasMaterialFamilyConflict(left = [], right = []) {
+  const leftFamilies = detectMaterialFamilies(left);
+  const rightFamilies = detectMaterialFamilies(right);
+
+  if (!leftFamilies.length || !rightFamilies.length) {
+    return false;
+  }
+
+  return !overlapItems(leftFamilies, rightFamilies).length;
+}
+
 function jaccardSimilarity(left, right) {
   const leftSet = new Set(left || []);
   const rightSet = new Set(right || []);
@@ -1034,13 +1157,15 @@ function buildProductSignals(title, description, context = buildProductContext(t
   const combinedText = `${context.normalizedTitle} ${context.normalizedDescription}`.trim();
   const combinedSet = new Set([...context.titleTokens, ...context.descriptionTokens]);
   const primaryTypeRule = detectPrimaryProductType(context);
+  const materials = collectSignalMatches(combinedText, combinedSet, MATERIAL_SIGNALS);
 
   return {
     brand: extractBrandToken(title),
     category: detectCategoryFromTextData(combinedText, context.titleTokens, context.descriptionTokens),
     primaryType: primaryTypeRule?.type || "",
     primaryTypeCategory: primaryTypeRule?.category || "",
-    materials: collectSignalMatches(combinedText, combinedSet, MATERIAL_SIGNALS),
+    materials,
+    materialFamilies: detectMaterialFamilies(materials),
     audiences: collectSignalMatches(combinedText, combinedSet, AUDIENCE_SIGNALS),
     useCases: collectSignalMatches(combinedText, combinedSet, USE_CASE_SIGNALS),
     features: collectSignalMatches(combinedText, combinedSet, FEATURE_SIGNALS),
@@ -1118,22 +1243,57 @@ function scoreSingleKeyword(keyword, context, productSignals) {
     Boolean(keywordSignals.primaryType) &&
     Boolean(productSignals.primaryType) &&
     keywordSignals.primaryType === productSignals.primaryType;
+  const keywordHasSpecificType = Boolean(keywordSignals.primaryType);
+  const productHasSpecificType = Boolean(productSignals.primaryType);
+  const specificTypeMismatch =
+    keywordHasSpecificType &&
+    productHasSpecificType &&
+    keywordSignals.primaryType !== productSignals.primaryType;
+  const sameBrand =
+    Boolean(keywordSignals.brand) &&
+    Boolean(productSignals.brand) &&
+    keywordSignals.brand === productSignals.brand;
+  const differentBrand =
+    Boolean(keywordSignals.brand) &&
+    Boolean(productSignals.brand) &&
+    keywordSignals.brand !== productSignals.brand;
   const materialOverlap = overlapItems(keywordSignals.materials, productSignals.materials);
   const audienceOverlap = overlapItems(keywordSignals.audiences, productSignals.audiences);
   const useCaseOverlap = overlapItems(keywordSignals.useCases, productSignals.useCases);
   const featureOverlap = overlapItems(keywordSignals.features, productSignals.features);
   const sizeOverlap = overlapItems(keywordSignals.sizeIndicators, productSignals.sizeIndicators);
+  const materialConflict = hasMaterialFamilyConflict(
+    keywordSignals.materials,
+    productSignals.materials
+  );
   const signalOverlapCount =
     materialOverlap.length +
     audienceOverlap.length +
     useCaseOverlap.length +
     featureOverlap.length +
     sizeOverlap.length;
+  const sharedSignalTokens = new Set(
+    [
+      ...materialOverlap,
+      ...audienceOverlap,
+      ...useCaseOverlap,
+      ...featureOverlap,
+      ...sizeOverlap,
+    ].flatMap((item) => tokenize(item))
+  );
+  const meaningfulMatchedTokens = matchedTokens.filter(
+    (token) => !sharedSignalTokens.has(token)
+  );
+  const broadOnlyMatch =
+    matchedTokens.length > 0 && meaningfulMatchedTokens.length === 0;
 
   let score = 0;
   let reason = "No direct product connection detected.";
 
-  if (categoryMismatch && !samePrimaryType) {
+  if (specificTypeMismatch) {
+    score = sameCategory ? 3 : 2;
+    reason = "Keyword names a different core product type than the product.";
+  } else if (categoryMismatch && !samePrimaryType) {
     score = 0;
     reason = "Keyword points to a different product category than the product.";
   } else if (looksLikeDifferentProduct(normalizedKeyword, context) && !samePrimaryType) {
@@ -1172,6 +1332,32 @@ function scoreSingleKeyword(keyword, context, productSignals) {
   } else {
     score = 0;
     reason = "No meaningful connection found between this keyword and the product.";
+  }
+
+  if (differentBrand && !sameBrand && score > 0) {
+    score = Math.min(score, samePrimaryType ? 5 : 2);
+    reason = samePrimaryType
+      ? "Keyword is strongly tied to another brand, so relevance is limited."
+      : "Keyword is strongly tied to another brand and only has marginal product overlap.";
+  }
+
+  if (materialConflict && score > 0) {
+    score = Math.min(score, samePrimaryType ? 4 : 2);
+    reason = samePrimaryType
+      ? "Keyword targets a different material variant than the product."
+      : "Keyword overlaps only loosely and points to a different material.";
+  }
+
+  if (keywordHasSpecificType && !samePrimaryType && !exactComparableMatch && score > 3) {
+    score = broadOnlyMatch || matchRatio < 0.75 ? 3 : 4;
+    reason = sameCategory
+      ? "Keyword names a specific nearby product type, but the product details only show broad overlap."
+      : "Keyword names a specific product type that is not clearly supported by the product details.";
+  }
+
+  if (broadOnlyMatch && !samePrimaryType && score > 3) {
+    score = 3;
+    reason = "Keyword has only a thin relation to the product and should be reviewed carefully.";
   }
 
   return {
@@ -2139,10 +2325,18 @@ function scoreTargetAsin(asin, ownProduct, targetProduct) {
   const ownSignals = ownProduct.signals || buildProductSignals(ownProduct.title, ownProduct.description, ownProduct.context);
   const targetSignals = buildProductSignals(targetProduct.title || "", targetDescription, targetContext);
   const sameBrand = Boolean(ownSignals.brand) && ownSignals.brand === targetSignals.brand;
+  const differentBrand =
+    Boolean(ownSignals.brand) &&
+    Boolean(targetSignals.brand) &&
+    ownSignals.brand !== targetSignals.brand;
   const sameCategory = Boolean(ownSignals.category) && ownSignals.category === targetSignals.category;
   const categoryMismatch = Boolean(ownSignals.category) && Boolean(targetSignals.category) && ownSignals.category !== targetSignals.category;
   const samePrimaryType = Boolean(ownSignals.primaryType) && ownSignals.primaryType === targetSignals.primaryType;
   const materialOverlap = overlapItems(ownSignals.materials, targetSignals.materials);
+  const materialConflict = hasMaterialFamilyConflict(
+    ownSignals.materials,
+    targetSignals.materials
+  );
   const audienceOverlap = overlapItems(ownSignals.audiences, targetSignals.audiences);
   const useCaseOverlap = overlapItems(ownSignals.useCases, targetSignals.useCases);
   const featureOverlap = overlapItems(ownSignals.features, targetSignals.features);
@@ -2193,6 +2387,18 @@ function scoreTargetAsin(asin, ownProduct, targetProduct) {
   if (differentProduct && score > 2) {
     score = Math.min(score, 2);
     reason = "Different product category or very different buying intent, so this should be excluded.";
+  }
+
+  if (materialConflict && score > 0) {
+    score = Math.min(score, samePrimaryType ? 4 : 2);
+    reason = samePrimaryType
+      ? "Same product family but different material variant, so targeting overlap is limited."
+      : "Different material and weak product overlap, so this ASIN should be excluded.";
+  }
+
+  if (differentBrand && !samePrimaryType && score > 2) {
+    score = 2;
+    reason = "Different brand and different product family, so this ASIN should be excluded.";
   }
 
   const relevanceLabel = score >= 4 ? "Relevant" : "Irrelevant";
@@ -2506,7 +2712,20 @@ function normalizeComparableTitle(value) {
 
 function extractBrandToken(value) {
   const tokens = tokenize(value);
-  return tokens.length ? tokens[0] : "";
+
+  for (const token of tokens) {
+    if (token.length < 3 || /^\d+$/.test(token)) {
+      continue;
+    }
+
+    if (GENERIC_BRAND_WORDS.has(token)) {
+      continue;
+    }
+
+    return token;
+  }
+
+  return "";
 }
 
 function decodeHtml(value) {
