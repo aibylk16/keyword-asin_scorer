@@ -574,5 +574,5 @@ function truncateScrapTitle(value, limit = 72) {
     return text;
   }
 
-  return `${text.slice(0, limit - 1).trimEnd()}…`;
+  return `${text.slice(0, Math.max(1, limit - 3)).trimEnd()}...`;
 }
