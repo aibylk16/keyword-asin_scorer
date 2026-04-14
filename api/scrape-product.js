@@ -887,7 +887,20 @@ function extractDealStatusFromHtml(html, text = "", sellingPrice = "", mrp = "",
 
 function extractBuyBoxWinnerFromText(text, lines = [], buyBoxAvailable = false, availabilityStatus = "") {
   const textBlock = [String(text || ""), ...(lines || [])].join("\n");
-  const directLineMatch = textBlock.match(/Sold by:\s*([^\n]+)/i) || textBlock.match(/Sold by\s*\n+\s*([^\n]+)/i);
+  const markdownLineMatch =
+    textBlock.match(/(?:Sold by|Shipper\s*\/\s*Seller)\s*\n+\s*\[([^\]]+)\]\([^)]+\)/i) ||
+    textBlock.match(/Ships from\s*\n+\s*Amazon[\s\S]{0,240}?(?:Sold by|Shipper\s*\/\s*Seller)\s*\n+\s*\[([^\]]+)\]\([^)]+\)/i);
+
+  if (markdownLineMatch?.[1]) {
+    const markdownSeller = normalizeSellerName(markdownLineMatch[1]);
+    if (isUsableSellerName(markdownSeller)) {
+      return markdownSeller;
+    }
+  }
+
+  const directLineMatch =
+    textBlock.match(/(?:Sold by|Shipper\s*\/\s*Seller):\s*([^\n]+)/i) ||
+    textBlock.match(/(?:Sold by|Shipper\s*\/\s*Seller)\s*\n+\s*([^\n]+)/i);
   if (directLineMatch?.[1]) {
     const directSeller = normalizeSellerName(directLineMatch[1]);
     if (isUsableSellerName(directSeller)) {
@@ -946,7 +959,7 @@ function extractDealStatusFromText(text, lines = [], sellingPrice = "", mrp = ""
 }
 
 function extractSellerName(value) {
-  const normalized = cleanText(value);
+  const normalized = cleanText(stripMarkdownLinks(value));
   const patterns = [
     /ships from\s+amazon\s+sold by\s+([^|]+?)(?:\s+(?:returns|payment|secure transaction|add to cart|buy now|details|quantity)\b|$)/i,
     /ships from\s*&?\s*sold by\s+([^|]+?)(?:\s+(?:returns|payment|secure transaction|add to cart|buy now|details|quantity)\b|$)/i,
@@ -954,6 +967,7 @@ function extractSellerName(value) {
     /ships from\s*:?\s*amazon\s+sold by\s*:?\s*([^|]+?)(?:\s+(?:returns|payment|secure transaction|add to cart|buy now|details|quantity)\b|$)/i,
     /sold by\s*:?\s*([^|]+?)(?:\s+(?:returns|payment|secure transaction|ships from|dispatches from|add to cart|buy now|details|quantity)\b|$)/i,
     /sold by\s+([^|]+?)(?:\s+(?:returns|payment|secure transaction|ships from|dispatches from|add to cart|buy now|details|quantity)\b|$)/i,
+    /shipper\s*\/\s*seller\s*:?\s*([^|]+?)(?:\s+(?:returns|payment|secure transaction|ships from|dispatches from|add to cart|buy now|details|quantity)\b|$)/i,
     /seller\s*:\s*([^|]+?)(?:\s+(?:fulfilled|ships from|dispatches from)\b|$)/i,
   ];
 
@@ -999,10 +1013,13 @@ function isUsableSellerName(value) {
 }
 
 function normalizeSellerName(value) {
-  const seller = cleanText(value)
+  const seller = cleanText(stripMarkdownLinks(value))
     .replace(/^(ships from\s*&?\s*)?sold by\s+/i, "")
     .replace(/^(dispatches from\s*&?\s*)?sold by\s+/i, "")
+    .replace(/^shipper\s*\/\s*seller\s+/i, "")
     .replace(/^(seller\s*:\s*)/i, "")
+    .replace(/\[([^\]]+)\]/g, "$1")
+    .replace(/\((?:javascript|https?:\/\/)[^)]+\)/gi, "")
     .replace(/\b(?:returns|payment|secure transaction|details|quantity|add to cart|buy now)\b.*$/i, "")
     .replace(/\.$/, "")
     .trim();
@@ -1012,6 +1029,10 @@ function normalizeSellerName(value) {
   }
 
   return seller;
+}
+
+function stripMarkdownLinks(value) {
+  return String(value || "").replace(/\[([^\]]+)\]\((?:[^)]*)\)/g, "$1");
 }
 
 function hasBuyBoxControlsHtml(html, text = "") {

@@ -176,7 +176,7 @@ async function runScrapQueue() {
 
   const successCount = currentScrapResults.filter((item) => item.status === "success").length;
   const failedCount = currentScrapResults.filter((item) => item.status === "failed").length;
-  setScrapStatus(`Finished. ${successCount} success, ${failedCount} failed.`);
+  setScrapStatus(`Finished. ${successCount} completed, ${failedCount} failed.`);
 }
 
 async function fetchScrapItem(item) {
@@ -355,15 +355,11 @@ function renderScrapResults(rows) {
       (row) => `
         <tr>
           <td>${escapeHtml(row.asin || "Invalid")}</td>
-          <td><span class="scrap-status-badge scrap-status-${escapeHtml(row.status)}">${escapeHtml(capitalize(row.status))}</span></td>
-          <td>${escapeHtml(row.title || row.errorMessage || "Waiting for data")}</td>
+          <td class="scrap-title-cell">${buildScrapTableTitle(row)}</td>
           <td>${escapeHtml(row.sellingPrice || "-")}</td>
-          <td>${escapeHtml(row.mrp || "-")}</td>
-          <td>${escapeHtml(row.discountPercent || "-")}</td>
           <td>${escapeHtml(row.rating || "-")}</td>
           <td>${escapeHtml(row.numberOfReviews || "-")}</td>
           <td>${escapeHtml(getBuyBoxDisplayValue(row))}</td>
-          <td>${escapeHtml(row.dealStatus || "No active deal detected")}</td>
         </tr>
       `
     )
@@ -389,7 +385,6 @@ function renderScrapResults(rows) {
               <p class="eyebrow">${escapeHtml(row.asin || "Invalid ASIN")}</p>
               <h2>${escapeHtml(row.title || "Title not available")}</h2>
             </div>
-            <span class="scrap-status-badge scrap-status-${escapeHtml(row.status)}">${escapeHtml(capitalize(row.status))}</span>
           </div>
           <div class="scrap-meta-grid">
             <article><strong>Source</strong><span>${escapeHtml(row.sourceName || "-")}</span></article>
@@ -426,13 +421,13 @@ function renderScrapResults(rows) {
 function renderScrapEmptyState() {
   scrapResultsBody.innerHTML = `
     <tr class="empty-row">
-      <td colspan="10">Add ASINs and click <strong>Fetch Product Details</strong>.</td>
+      <td colspan="6">Add ASINs and click <strong>Fetch Product Details</strong>.</td>
     </tr>
   `;
   scrapSummaryCards.innerHTML = "";
   scrapCardGrid.innerHTML = `
     <article class="scrap-empty-card">
-      Product cards with selling price, MRP, discount, reviews, rating, Buy Box winner, and deal status will appear here.
+      Product cards with product URL, pricing, reviews, Buy Box winner, and availability will appear here.
     </article>
   `;
   scrapExportOutput.value = "";
@@ -441,12 +436,10 @@ function renderScrapEmptyState() {
 function buildScrapSummaryCards(rows) {
   const queued = rows.filter((row) => row.status === "queued").length;
   const fetching = rows.filter((row) => row.status === "fetching").length;
-  const success = rows.filter((row) => row.status === "success").length;
   const failed = rows.filter((row) => row.status === "failed").length;
 
   return [
     { value: String(rows.length), label: "Total ASINs" },
-    { value: String(success), label: "Success" },
     { value: String(failed), label: "Failed" },
     { value: String(queued + fetching), label: "In Queue / Fetching" },
   ];
@@ -566,4 +559,20 @@ function getBuyBoxDisplayValue(row) {
   }
 
   return "Buy Box not available";
+}
+
+function buildScrapTableTitle(row) {
+  const fullTitle = row.title || row.errorMessage || "Waiting for data";
+  const shortTitle = truncateScrapTitle(fullTitle, 72);
+  return `<span class="scrap-table-title" title="${escapeHtml(fullTitle)}">${escapeHtml(shortTitle)}</span>`;
+}
+
+function truncateScrapTitle(value, limit = 72) {
+  const text = String(value || "").trim();
+
+  if (!text || text.length <= limit) {
+    return text;
+  }
+
+  return `${text.slice(0, limit - 1).trimEnd()}…`;
 }

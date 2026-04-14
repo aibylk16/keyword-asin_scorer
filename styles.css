@@ -56,6 +56,7 @@ textarea {
 }
 
 .author-badge {
+  display: none !important;
   position: absolute;
   top: 8px;
   right: 0;
@@ -193,7 +194,7 @@ p {
 
 .scrap-card-header {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
   align-items: flex-start;
 }
@@ -637,7 +638,7 @@ td[title]:not(.service-error):hover {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 720px;
+  min-width: 620px;
 }
 
 th,
@@ -659,6 +660,21 @@ th {
 td:nth-child(2) {
   width: 90px;
   font-weight: 700;
+}
+
+.scrap-results-table td:nth-child(2),
+.scrap-title-cell {
+  width: 320px;
+  max-width: 320px;
+  font-weight: 400;
+}
+
+.scrap-table-title {
+  display: block;
+  max-width: 320px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .score-pill {
@@ -793,7 +809,7 @@ td:nth-child(2) {
 
   .author-badge {
     position: static;
-    display: inline-flex;
+    display: none !important;
     margin: 0 0 12px 0;
   }
 
