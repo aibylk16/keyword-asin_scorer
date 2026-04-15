@@ -737,20 +737,38 @@ function extractMrpFromHtml(html, text = "", sellingPrice = "") {
 }
 
 function extractDiscountPercentFromHtml(html, text = "", sellingPrice = "", mrp = "") {
+  const calculatedDiscount = calculateDiscountPercent(sellingPrice, mrp);
+  const priceSection =
+    extractMarkdownSection(String(text || html), "## Price", "## About this Item") ||
+    extractMarkdownSection(String(text || html), "## Price", "## Product Description") ||
+    collectContextSnippets(html, [
+      "priceToPay",
+      "corePriceDisplay_desktop_feature_div",
+      "corePrice_feature_div",
+      "apex_desktop",
+      "basisPrice",
+      "priceBlockSavingsString",
+      "priceBlockStrikePriceString",
+    ]).join("\n") ||
+    String(text || html);
   const directPatterns = [
+    /with\s+(\d{1,3})\s*percent\s+savings/i,
     /(\d{1,3})%\s*off/i,
     /Save\s+(\d{1,3})%/i,
     /Savings?\s*[:\-]?\s*(\d{1,3})%/i,
   ];
 
   for (const pattern of directPatterns) {
-    const match = html.match(pattern) || text.match(pattern);
+    const match = priceSection.match(pattern);
     if (match?.[1]) {
-      return `${match[1]}%`;
+      const directPercent = `${match[1]}%`;
+      if (!calculatedDiscount || directPercent === calculatedDiscount) {
+        return directPercent;
+      }
     }
   }
 
-  return calculateDiscountPercent(sellingPrice, mrp);
+  return calculatedDiscount;
 }
 
 function extractSellingPriceFromText(text) {
@@ -809,20 +827,29 @@ function extractMrpFromText(text, lines = [], sellingPrice = "") {
 
 function extractDiscountPercentFromText(text, lines = [], sellingPrice = "", mrp = "") {
   const textBlock = [String(text || ""), ...(lines || [])].join("\n");
+  const calculatedDiscount = calculateDiscountPercent(sellingPrice, mrp);
+  const priceSection =
+    extractMarkdownSection(textBlock, "## Price", "## About this Item") ||
+    extractMarkdownSection(textBlock, "## Price", "## Product Description") ||
+    textBlock;
   const patterns = [
+    /with\s+(\d{1,3})\s*percent\s+savings/i,
     /(\d{1,3})%\s*off/i,
     /Save\s+(\d{1,3})%/i,
     /Savings?\s*[:\-]?\s*(\d{1,3})%/i,
   ];
 
   for (const pattern of patterns) {
-    const match = textBlock.match(pattern);
+    const match = priceSection.match(pattern);
     if (match?.[1]) {
-      return `${match[1]}%`;
+      const directPercent = `${match[1]}%`;
+      if (!calculatedDiscount || directPercent === calculatedDiscount) {
+        return directPercent;
+      }
     }
   }
 
-  return calculateDiscountPercent(sellingPrice, mrp);
+  return calculatedDiscount;
 }
 
 function extractBuyBoxWinnerFromHtml(html, text = "", buyBoxAvailable = false, availabilityStatus = "") {
@@ -925,11 +952,18 @@ function extractBuyBoxWinnerFromText(text, lines = [], buyBoxAvailable = false, 
 
 function extractDealStatusFromText(text, lines = [], sellingPrice = "", mrp = "", discountPercent = "") {
   const textBlock = [String(text || ""), ...(lines || [])].join("\n");
-  const priceSection =
+  const priceSectionRaw =
     extractMarkdownSection(textBlock, "## Price", "## About this Item") ||
     extractMarkdownSection(textBlock, "## Price", "## Product Description") ||
     textBlock;
+  const offersSectionRaw =
+    extractMarkdownSection(textBlock, "##### Offers", "## 10 days Return & Exchange") ||
+    extractMarkdownSection(textBlock, "##### Offers", "## Product details") ||
+    "";
+  const priceSection = stripMarkdownLinks(priceSectionRaw);
+  const offersSection = stripMarkdownLinks(offersSectionRaw);
   const dealPatterns = [
+    /(\d+%\s+off\s+any\s+\d+(?:,\s*\d+%\s+off\s+any\s+\d+)*)/i,
     /limited time deal[:\s-]*([^\n.]+)/i,
     /deal of the day[:\s-]*([^\n.]+)/i,
     /lightning deal[:\s-]*([^\n.]+)/i,
@@ -940,12 +974,12 @@ function extractDealStatusFromText(text, lines = [], sellingPrice = "", mrp = ""
   ];
 
   for (const pattern of dealPatterns) {
-    const match = priceSection.match(pattern);
+    const match = priceSection.match(pattern) || offersSection.match(pattern);
     if (!match?.[1]) {
       continue;
     }
 
-    const dealText = cleanText(match[1]).replace(/\.$/, "").trim();
+    const dealText = normalizeDealText(match[1]);
     if (dealText && !looksLikeNoise(dealText) && !isSuspiciousDealText(dealText)) {
       return `Active deal detected: ${dealText}`;
     }
@@ -1033,6 +1067,16 @@ function normalizeSellerName(value) {
 
 function stripMarkdownLinks(value) {
   return String(value || "").replace(/\[([^\]]+)\]\((?:[^)]*)\)/g, "$1");
+}
+
+function normalizeDealText(value) {
+  return cleanText(stripMarkdownLinks(value))
+    .replace(/\s+/g, " ")
+    .replace(/\s*https?:\/\/\S+/gi, "")
+    .replace(/\]\([^)]+/g, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\.$/, "")
+    .trim();
 }
 
 function hasBuyBoxControlsHtml(html, text = "") {
