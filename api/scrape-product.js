@@ -356,6 +356,10 @@ function extractDescriptionFromHtml(html, bulletPoints) {
 function extractReviewCountFromHtml(html) {
   const patterns = [
     /<span[^>]*id=["']acrCustomerReviewText["'][^>]*>([\s\S]*?)<\/span>/i,
+    /\[\(([\d,]+)\)\][\s\S]{0,160}averageCustomerReviewsAnchor/i,
+    /averageCustomerReviewsAnchor[\s\S]{0,160}\[\(([\d,]+)\)\]/i,
+    /([\d,]+)\s+global\s+ratings?/i,
+    /([\d,]+)\s+global\s+reviews?/i,
     /([\d,]+)\s+ratings?/i,
     /([\d,]+)\s+reviews?/i,
   ];
@@ -366,7 +370,7 @@ function extractReviewCountFromHtml(html) {
       continue;
     }
 
-    const count = cleanText(match[1]).replace(/[^\d,]/g, "");
+    const count = normalizeReviewCount(match[1]);
     if (count) {
       return count;
     }
@@ -469,8 +473,30 @@ function extractDescriptionFromMirror(lines, bulletPoints) {
 }
 
 function extractReviewCountFromText(text) {
-  const match = String(text || "").match(/([\d,]+)\s+ratings?/i) || String(text || "").match(/([\d,]+)\s+reviews?/i);
-  return match?.[1] || "";
+  const source = String(text || "");
+  const patterns = [
+    /\[\(([\d,]+)\)\]\([^)]*averageCustomerReviewsAnchor/i,
+    /averageCustomerReviewsAnchor[\s\S]{0,160}\[\(([\d,]+)\)\]/i,
+    /customer reviews?[\s\S]{0,240}\[\(([\d,]+)\)\]/i,
+    /([\d,]+)\s+global\s+ratings?/i,
+    /([\d,]+)\s+global\s+reviews?/i,
+    /([\d,]+)\s+ratings?/i,
+    /([\d,]+)\s+reviews?/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = source.match(pattern);
+    if (!match?.[1]) {
+      continue;
+    }
+
+    const count = normalizeReviewCount(match[1]);
+    if (count) {
+      return count;
+    }
+  }
+
+  return "";
 }
 
 function extractRatingFromText(text) {
@@ -489,6 +515,12 @@ function extractBackendKeywordsFromText(text) {
     .map((item) => cleanText(item))
     .filter((item) => item.length > 1)
     .slice(0, 20);
+}
+
+function normalizeReviewCount(value) {
+  return cleanText(value)
+    .replace(/[^\d,]/g, "")
+    .replace(/^,+|,+$/g, "");
 }
 
 function isUsableBullet(value) {

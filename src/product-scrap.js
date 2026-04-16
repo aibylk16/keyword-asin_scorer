@@ -360,6 +360,7 @@ function renderScrapResults(rows) {
           <td>${escapeHtml(row.rating || "-")}</td>
           <td>${escapeHtml(row.numberOfReviews || "-")}</td>
           <td>${escapeHtml(getBuyBoxDisplayValue(row))}</td>
+          <td>${escapeHtml(row.availabilityStatus || "-")}</td>
         </tr>
       `
     )
@@ -415,7 +416,7 @@ function renderScrapResults(rows) {
 function renderScrapEmptyState() {
   scrapResultsBody.innerHTML = `
     <tr class="empty-row">
-      <td colspan="6">Add ASINs and click <strong>Fetch Product Details</strong>.</td>
+      <td colspan="7">Add ASINs and click <strong>Fetch Product Details</strong>.</td>
     </tr>
   `;
   scrapSummaryCards.innerHTML = "";
@@ -551,7 +552,7 @@ function getBuyBoxDisplayValue(row) {
 
 function buildScrapTableTitle(row) {
   const fullTitle = row.title || row.errorMessage || "Waiting for data";
-  const shortTitle = truncateScrapTitle(fullTitle, 72);
+  const shortTitle = truncateScrapTitle(fullTitle, 58);
   return `<span class="scrap-table-title" title="${escapeHtml(fullTitle)}">${escapeHtml(shortTitle)}</span>`;
 }
 

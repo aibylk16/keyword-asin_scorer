@@ -673,14 +673,14 @@ td:nth-child(2) {
 
 .scrap-results-table td:nth-child(2),
 .scrap-title-cell {
-  width: 320px;
-  max-width: 320px;
+  width: 260px;
+  max-width: 260px;
   font-weight: 400;
 }
 
 .scrap-table-title {
   display: block;
-  max-width: 320px;
+  max-width: 260px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
