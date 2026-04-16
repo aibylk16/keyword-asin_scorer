@@ -134,6 +134,7 @@ async function scrapeAmazonProduct(url, fallbackAsin = "", amazonHost = MARKETPL
 
       if (
         attempt.kind === "html" &&
+        /^Amazon Product Page$/i.test(attempt.sourceName || "") &&
         product.title &&
         product.sellingPrice &&
         !isSuspiciousPrice(product.sellingPrice) &&
@@ -169,8 +170,8 @@ function mergeAttemptProducts(results, url, asin, amazonHost) {
   }
 
   const ordered = [...results].sort((left, right) => {
-    const leftSourceBoost = left.attempt.kind === "html" ? 3 : 0;
-    const rightSourceBoost = right.attempt.kind === "html" ? 3 : 0;
+    const leftSourceBoost = getAttemptPriorityBoost(left);
+    const rightSourceBoost = getAttemptPriorityBoost(right);
     return (right.score + rightSourceBoost) - (left.score + leftSourceBoost);
   });
 
@@ -244,12 +245,16 @@ function getPriceSourcePriority(entry) {
   const product = entry?.product || {};
   const source = String(product.sourceName || "");
 
-  if (product.sellingPrice && !isSuspiciousPrice(product.sellingPrice) && /Amazon Product Page|Amazon Mobile Product Page/i.test(source)) {
+  if (product.sellingPrice && !isSuspiciousPrice(product.sellingPrice) && /^Amazon Product Page$/i.test(source)) {
     return 0;
   }
 
   if (product.sellingPrice && !isSuspiciousPrice(product.sellingPrice) && /Jina Mirror/i.test(source)) {
     return 1;
+  }
+
+  if (product.sellingPrice && !isSuspiciousPrice(product.sellingPrice) && /^Amazon Mobile Product Page$/i.test(source)) {
+    return 2;
   }
 
   return 9;
@@ -259,7 +264,7 @@ function getReviewSourcePriority(entry) {
   const product = entry?.product || {};
   const source = String(product.sourceName || "");
 
-  if ((product.numberOfReviews || product.rating) && /Amazon Product Page|Amazon Mobile Product Page/i.test(source)) {
+  if ((product.numberOfReviews || product.rating) && /^Amazon Product Page$/i.test(source)) {
     return 0;
   }
 
@@ -267,7 +272,33 @@ function getReviewSourcePriority(entry) {
     return 1;
   }
 
+  if ((product.numberOfReviews || product.rating) && /^Amazon Mobile Product Page$/i.test(source)) {
+    return 2;
+  }
+
   return 9;
+}
+
+function getAttemptPriorityBoost(entry) {
+  const source = String(entry?.attempt?.sourceName || entry?.product?.sourceName || "");
+
+  if (/^Amazon Product Page$/i.test(source)) {
+    return 5;
+  }
+
+  if (/Jina Mirror/i.test(source)) {
+    return 2;
+  }
+
+  if (/^Amazon Search Page$/i.test(source)) {
+    return 1;
+  }
+
+  if (/^Amazon Mobile Product Page$/i.test(source)) {
+    return 0;
+  }
+
+  return 0;
 }
 
 function buildAttempts(url, asin, amazonHost) {
@@ -279,9 +310,9 @@ function buildAttempts(url, asin, amazonHost) {
 
   return [
     { url: directUrl, sourceName: "Amazon Product Page", kind: "html" },
-    { url: mobileUrl, sourceName: "Amazon Mobile Product Page", kind: "html" },
     ...(searchUrl ? [{ url: searchUrl, sourceName: "Amazon Search Page", kind: "html" }] : []),
     { url: mirrorUrl, sourceName: "Jina Mirror", kind: "mirror" },
+    { url: mobileUrl, sourceName: "Amazon Mobile Product Page", kind: "html" },
   ];
 }
 
@@ -413,12 +444,13 @@ function extractAsin(value) {
 
 function extractTitleFromHtml(html) {
   const patterns = [
-    /<span[^>]*id=["']productTitle["'][^>]*>([\s\S]*?)<\/span>/i,
-    /<h1[^>]*id=["']title["'][^>]*>([\s\S]*?)<\/h1>/i,
-    /<title>([\s\S]*?)<\/title>/i,
+    { pattern: /<span[^>]*id=["']productTitle["'][^>]*>([\s\S]*?)<\/span>/i, weight: 1 },
+    { pattern: /<h1[^>]*id=["']title["'][^>]*>([\s\S]*?)<\/h1>/i, weight: 1 },
+    { pattern: /<title>([\s\S]*?)<\/title>/i, weight: 2 },
   ];
+  const candidates = [];
 
-  for (const pattern of patterns) {
+  for (const { pattern, weight } of patterns) {
     const match = html.match(pattern);
     if (!match?.[1]) {
       continue;
@@ -426,11 +458,11 @@ function extractTitleFromHtml(html) {
 
     const title = cleanAmazonTitle(cleanText(match[1]));
     if (isUsableTitle(title)) {
-      return title;
+      candidates.push({ title, weight });
     }
   }
 
-  return "";
+  return selectBestTitleCandidate(candidates);
 }
 
 function extractBulletPointsFromHtml(html) {
@@ -1759,6 +1791,37 @@ function collapseRepeatedPhrase(value) {
   }
 
   return text;
+}
+
+function selectBestTitleCandidate(candidates) {
+  const usableCandidates = (candidates || []).filter((candidate) => candidate?.title);
+  if (!usableCandidates.length) {
+    return "";
+  }
+
+  const scored = usableCandidates.map((candidate) => {
+    const title = candidate.title;
+    let score = candidate.weight || 0;
+
+    score += Math.min(title.length / 20, 8);
+
+    if (/\|\s*Pack of\b/i.test(title) || /\|\s*[A-Za-z][A-Za-z0-9 !&'-]{2,}$/i.test(title)) {
+      score += 3;
+    }
+
+    if (/\b(?:multicolor|printed|go green|blue-tiful|orange-y|purple-istic|pack of \d+)\b/i.test(title)) {
+      score += 2;
+    }
+
+    if (/amazon\./i.test(title) || /^buy\s+/i.test(title)) {
+      score -= 2;
+    }
+
+    return { title, score };
+  });
+
+  scored.sort((left, right) => right.score - left.score);
+  return scored[0].title;
 }
 
 function isSuspiciousPrice(value) {
