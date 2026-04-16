@@ -138,7 +138,20 @@ async function scrapeAmazonProduct(url, fallbackAsin = "", amazonHost = MARKETPL
         product.title &&
         product.sellingPrice &&
         !isSuspiciousPrice(product.sellingPrice) &&
-        (product.numberOfReviews || product.rating)
+        product.buyBoxWinner &&
+        hasPositiveAvailabilityStatus(product.availabilityStatus || "")
+      ) {
+        return product;
+      }
+
+      if (
+        attempt.kind === "html" &&
+        /^Amazon Mobile Product Page$/i.test(attempt.sourceName || "") &&
+        product.title &&
+        product.sellingPrice &&
+        !isSuspiciousPrice(product.sellingPrice) &&
+        product.buyBoxWinner &&
+        hasPositiveAvailabilityStatus(product.availabilityStatus || "")
       ) {
         return product;
       }
@@ -186,9 +199,14 @@ function mergeAttemptProducts(results, url, asin, amazonHost) {
     const rightRank = getReviewSourcePriority(right);
     return leftRank - rightRank || right.score - left.score;
   });
+  const rankedForAvailability = [...results].sort((left, right) => {
+    const leftRank = getAvailabilitySourcePriority(left);
+    const rightRank = getAvailabilitySourcePriority(right);
+    return leftRank - rightRank || right.score - left.score;
+  });
 
   const best = ordered[0];
-  const titleResult = pickResult(ordered, (entry) => entry.product.title);
+  const titleResult = pickBestTitleResult(ordered);
   const bulletResult = pickResult(ordered, (entry) => (entry.product.bulletPoints || []).length);
   const descriptionResult = pickResult(ordered, (entry) => entry.product.productDescription);
   const priceResult = pickResult(rankedForPrice, (entry) => entry.product.sellingPrice && !isSuspiciousPrice(entry.product.sellingPrice));
@@ -196,9 +214,19 @@ function mergeAttemptProducts(results, url, asin, amazonHost) {
   const reviewsResult = pickResult(rankedForReview, (entry) => entry.product.numberOfReviews);
   const ratingResult = pickResult(rankedForReview, (entry) => entry.product.rating);
   const sellerResult = pickResult(ordered, (entry) => entry.product.buyBoxWinner);
-  const availabilityResult = pickResult(ordered, (entry) => entry.product.availabilityStatus);
+  const availabilityResult = pickResult(rankedForAvailability, (entry) => hasReliableAvailability(entry.product));
   const dealResult = pickResult(ordered, (entry) => entry.product.dealStatus && !isSuspiciousDealText(entry.product.dealStatus));
   const backendKeywordsResult = pickResult(ordered, (entry) => (entry.product.backendKeywords || []).length);
+  const mergedAvailabilityStatus = normalizeAvailabilityStatus(
+    availabilityResult?.product.availabilityStatus || best.product.availabilityStatus || "",
+    sellerResult?.product.buyBoxWinner || best.product.buyBoxWinner || "",
+    priceResult?.product.sellingPrice || best.product.sellingPrice || "",
+    Boolean(sellerResult?.product.buyBoxAvailable || availabilityResult?.product.buyBoxAvailable || best.product.buyBoxAvailable)
+  );
+  const mergedBuyBoxAvailable = Boolean(
+    (sellerResult?.product.buyBoxAvailable || availabilityResult?.product.buyBoxAvailable || best.product.buyBoxAvailable || sellerResult?.product.buyBoxWinner || priceResult?.product.sellingPrice) &&
+    !isUnavailableStatus(mergedAvailabilityStatus)
+  );
 
   const sourceNames = [
     titleResult?.product.sourceName,
@@ -223,8 +251,8 @@ function mergeAttemptProducts(results, url, asin, amazonHost) {
     discountPercent: calculateDiscountPercent(priceResult?.product.sellingPrice || "", mrpResult?.product.mrp || ""),
     numberOfReviews: reviewsResult?.product.numberOfReviews || "",
     rating: ratingResult?.product.rating || "",
-    availabilityStatus: availabilityResult?.product.availabilityStatus || "",
-    buyBoxAvailable: Boolean((sellerResult?.product.buyBoxAvailable || availabilityResult?.product.buyBoxAvailable || best.product.buyBoxAvailable) && !isUnavailableStatus(availabilityResult?.product.availabilityStatus || best.product.availabilityStatus || "")),
+    availabilityStatus: mergedAvailabilityStatus,
+    buyBoxAvailable: mergedBuyBoxAvailable,
     buyBoxWinner: sellerResult?.product.buyBoxWinner || "",
     dealStatus: dealResult?.product.dealStatus || "",
     backendKeywords: backendKeywordsResult?.product.backendKeywords || best.product.backendKeywords || [],
@@ -239,6 +267,45 @@ function pickResult(results, predicate) {
       return false;
     }
   }) || null;
+}
+
+function pickBestTitleResult(results) {
+  const candidates = (results || []).filter((entry) => entry?.product?.title);
+
+  if (!candidates.length) {
+    return null;
+  }
+
+  const ranked = [...candidates].sort((left, right) => {
+    const leftScore = scoreMergedTitle(left?.product?.title) + getAttemptPriorityBoost(left);
+    const rightScore = scoreMergedTitle(right?.product?.title) + getAttemptPriorityBoost(right);
+    return rightScore - leftScore;
+  });
+
+  return ranked[0] || null;
+}
+
+function scoreMergedTitle(title) {
+  const text = String(title || "").trim();
+  if (!text) {
+    return -100;
+  }
+
+  let score = Math.min(text.length / 12, 20);
+
+  if (/\|\s*pack of\b/i.test(text) || /\|\s*[A-Za-z][A-Za-z0-9 !&'-]{2,}$/i.test(text)) {
+    score += 5;
+  }
+
+  if (/\b(?:ankle length|crew length|low cut|printed|designer|multicolor|eggplant|pistachio|northern lights|urban groove)\b/i.test(text)) {
+    score += 4;
+  }
+
+  if (/^\w+(?:\s+\w+){0,2}$/i.test(text) || /\bhexafun socks\b/i.test(text)) {
+    score -= 8;
+  }
+
+  return score;
 }
 
 function getPriceSourcePriority(entry) {
@@ -279,6 +346,39 @@ function getReviewSourcePriority(entry) {
   return 9;
 }
 
+function getAvailabilitySourcePriority(entry) {
+  const product = entry?.product || {};
+  const source = String(product.sourceName || "");
+  const hasPositiveAvailability = hasPositiveAvailabilityStatus(product.availabilityStatus);
+  const hasFallbackAvailability = Boolean(product.buyBoxWinner || product.sellingPrice || product.buyBoxAvailable);
+
+  if (hasPositiveAvailability && /^Amazon Product Page$/i.test(source)) {
+    return 0;
+  }
+
+  if (hasPositiveAvailability && /Jina Mirror/i.test(source)) {
+    return 1;
+  }
+
+  if (hasPositiveAvailability && /^Amazon Mobile Product Page$/i.test(source)) {
+    return 2;
+  }
+
+  if (hasFallbackAvailability && /^Amazon Product Page$/i.test(source)) {
+    return 3;
+  }
+
+  if (hasFallbackAvailability && /Jina Mirror/i.test(source)) {
+    return 4;
+  }
+
+  if (hasFallbackAvailability && /^Amazon Mobile Product Page$/i.test(source)) {
+    return 5;
+  }
+
+  return 9;
+}
+
 function getAttemptPriorityBoost(entry) {
   const source = String(entry?.attempt?.sourceName || entry?.product?.sourceName || "");
 
@@ -304,69 +404,61 @@ function getAttemptPriorityBoost(entry) {
 function buildAttempts(url, asin, amazonHost) {
   const directUrl = url;
   const mobileUrl = asin ? `${amazonHost}/gp/aw/d/${asin}` : url;
-  const searchUrl = asin ? `${amazonHost}/s?k=${asin}` : "";
   const mirrorBase = asin ? `${amazonHost}/dp/${asin}` : url;
   const mirrorUrl = `https://r.jina.ai/http://${mirrorBase.replace(/^https?:\/\//i, "")}`;
 
   return [
     { url: directUrl, sourceName: "Amazon Product Page", kind: "html" },
-    ...(searchUrl ? [{ url: searchUrl, sourceName: "Amazon Search Page", kind: "html" }] : []),
-    { url: mirrorUrl, sourceName: "Jina Mirror", kind: "mirror" },
     { url: mobileUrl, sourceName: "Amazon Mobile Product Page", kind: "html" },
+    { url: mirrorUrl, sourceName: "Jina Mirror", kind: "mirror" },
   ];
 }
 
 async function fetchAttempt(attempt) {
-  const userAgents = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-  ];
+  const userAgent =
+    attempt.kind === "mirror"
+      ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
+      : /^Amazon Mobile Product Page$/i.test(attempt.sourceName || "")
+        ? "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+        : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36";
 
-  let lastError = null;
+  const controller = new AbortController();
+  const timeoutMs = attempt.kind === "mirror" ? 7000 : 3000;
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-  for (const userAgent of userAgents) {
-    try {
-      const controller = new AbortController();
-      const timeoutMs = attempt.kind === "mirror" ? 15000 : 6000;
-      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const result = await fetch(attempt.url, {
+      headers: {
+        "user-agent": userAgent,
+        "accept-language": "en-IN,en;q=0.9",
+        accept:
+          attempt.kind === "mirror"
+            ? "text/plain,text/html;q=0.9,*/*;q=0.8"
+            : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "cache-control": "no-cache",
+        pragma: "no-cache",
+      },
+      signal: controller.signal,
+    });
 
-      const result = await fetch(attempt.url, {
-        headers: {
-          "user-agent": userAgent,
-          "accept-language": "en-IN,en;q=0.9",
-          accept:
-            attempt.kind === "mirror"
-              ? "text/plain,text/html;q=0.9,*/*;q=0.8"
-              : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "cache-control": "no-cache",
-          pragma: "no-cache",
-        },
-        signal: controller.signal,
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!result.ok) {
-        throw new Error(`${attempt.sourceName} returned ${result.status}`);
-      }
-
-      const text = await result.text();
-
-      if (!text || text.length < 40) {
-        throw new Error(`${attempt.sourceName} returned too little content`);
-      }
-
-      if (looksBlocked(text)) {
-        throw new Error(`${attempt.sourceName} returned a blocked/challenge page`);
-      }
-
-      return text;
-    } catch (error) {
-      lastError = error;
+    if (!result.ok) {
+      throw new Error(`${attempt.sourceName} returned ${result.status}`);
     }
-  }
 
-  throw lastError || new Error(`${attempt.sourceName} fetch failed`);
+    const text = await result.text();
+
+    if (!text || text.length < 40) {
+      throw new Error(`${attempt.sourceName} returned too little content`);
+    }
+
+    if (looksBlocked(text)) {
+      throw new Error(`${attempt.sourceName} returned a blocked/challenge page`);
+    }
+
+    return text;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 function parseHtmlProduct(html, fallbackAsin = "", sourceName = "Amazon", url = "") {
@@ -883,7 +975,7 @@ function extractOfferSignalsFromHtml(html) {
   const buyBoxWinner = extractBuyBoxWinnerFromHtml(html, text, buyBoxAvailable, availabilityStatus);
   const dealStatus = extractDealStatusFromHtml(html, text, sellingPrice, mrp, discountPercent);
 
-  return {
+  return normalizeOfferSignals({
     availabilityStatus,
     buyBoxAvailable,
     sellingPrice,
@@ -891,7 +983,7 @@ function extractOfferSignalsFromHtml(html) {
     discountPercent,
     buyBoxWinner,
     dealStatus,
-  };
+  });
 }
 
 function extractOfferSignalsFromText(text, lines = []) {
@@ -904,7 +996,7 @@ function extractOfferSignalsFromText(text, lines = []) {
   const buyBoxWinner = extractBuyBoxWinnerFromText(textBlock, lines, buyBoxAvailable, availabilityStatus);
   const dealStatus = extractDealStatusFromText(textBlock, lines, sellingPrice, mrp, discountPercent);
 
-  return {
+  return normalizeOfferSignals({
     availabilityStatus,
     buyBoxAvailable,
     sellingPrice,
@@ -912,6 +1004,25 @@ function extractOfferSignalsFromText(text, lines = []) {
     discountPercent,
     buyBoxWinner,
     dealStatus,
+  });
+}
+
+function normalizeOfferSignals(signals) {
+  const normalizedAvailabilityStatus = normalizeAvailabilityStatus(
+    signals?.availabilityStatus || "",
+    signals?.buyBoxWinner || "",
+    signals?.sellingPrice || "",
+    Boolean(signals?.buyBoxAvailable)
+  );
+  const normalizedBuyBoxAvailable = Boolean(
+    (signals?.buyBoxAvailable || signals?.buyBoxWinner || signals?.sellingPrice) &&
+    !isUnavailableStatus(normalizedAvailabilityStatus)
+  );
+
+  return {
+    ...signals,
+    availabilityStatus: normalizedAvailabilityStatus,
+    buyBoxAvailable: normalizedBuyBoxAvailable,
   };
 }
 
@@ -1484,6 +1595,40 @@ function extractAvailabilityStatusFromText(text, lines = []) {
   }
 
   return "";
+}
+
+function normalizeAvailabilityStatus(value, seller = "", price = "", buyBoxAvailable = false) {
+  const normalized = cleanText(value);
+
+  if (hasPositiveAvailabilityStatus(normalized)) {
+    return normalized;
+  }
+
+  if ((buyBoxAvailable || seller || price) && isUnavailableStatus(normalized)) {
+    return "In stock";
+  }
+
+  if ((buyBoxAvailable || seller || price) && !normalized) {
+    return "In stock";
+  }
+
+  return normalized;
+}
+
+function hasPositiveAvailabilityStatus(value) {
+  return /only\s+\d+\s+left in stock|in stock|available to ship|usually dispatched/i.test(String(value || ""));
+}
+
+function hasReliableAvailability(product) {
+  if (!product) {
+    return false;
+  }
+
+  if (hasPositiveAvailabilityStatus(product.availabilityStatus)) {
+    return true;
+  }
+
+  return Boolean(product.buyBoxWinner || product.sellingPrice || product.buyBoxAvailable);
 }
 
 function isUnavailableStatus(value) {

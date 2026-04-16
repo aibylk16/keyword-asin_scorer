@@ -19,8 +19,9 @@ const SCRAP_SAMPLE_ASINS = [
   "B0FT3SGTM7",
 ].join("\n");
 
-const SCRAP_CONCURRENCY = 3;
-const SCRAP_RETRY_LIMIT = 3;
+const SCRAP_CONCURRENCY = 12;
+const SCRAP_RETRY_LIMIT = 2;
+const SCRAP_RETRY_DELAY_MS = 150;
 const SCRAP_MARKETPLACE_MAP = {
   IN: "https://www.amazon.in/dp/",
   US: "https://www.amazon.com/dp/",
@@ -43,6 +44,7 @@ const SCRAP_HOST_TO_MARKETPLACE = Object.entries(SCRAP_MARKETPLACE_MAP).reduce(
 const SCRAP_DEFAULT_MARKETPLACE = "IN";
 
 let currentScrapResults = [];
+let scrapRenderScheduled = false;
 
 initializeScrapPage();
 
@@ -145,7 +147,7 @@ async function handleScrapSubmit(event) {
   }));
 
   renderScrapResults(currentScrapResults);
-  setScrapStatus(`Queued ${parsedInputs.length} item${parsedInputs.length === 1 ? "" : "s"} for scraping.`);
+  setScrapProgressStatus();
 
   await runScrapQueue();
 }
@@ -160,7 +162,7 @@ async function runScrapQueue() {
 
       const item = currentScrapResults[index];
       if (item.status === "failed") {
-        renderScrapResults(currentScrapResults);
+        scheduleScrapRender();
         continue;
       }
 
@@ -174,6 +176,7 @@ async function runScrapQueue() {
   const workerCount = Math.min(SCRAP_CONCURRENCY, Math.max(1, currentScrapResults.length));
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
 
+  renderScrapResults(currentScrapResults);
   const successCount = currentScrapResults.filter((item) => item.status === "success").length;
   const failedCount = currentScrapResults.filter((item) => item.status === "failed").length;
   setScrapStatus(`Finished. ${successCount} completed, ${failedCount} failed.`);
@@ -219,7 +222,7 @@ async function fetchScrapItem(item) {
       };
     } catch (error) {
       if (attempt < SCRAP_RETRY_LIMIT) {
-        await delay(350 * attempt);
+        await delay(SCRAP_RETRY_DELAY_MS * attempt);
       } else {
         return {
           ...item,
@@ -341,7 +344,41 @@ function updateScrapItem(index, next) {
     ...currentScrapResults[index],
     ...next,
   };
-  renderScrapResults(currentScrapResults);
+  scheduleScrapRender();
+  setScrapProgressStatus();
+}
+
+function scheduleScrapRender() {
+  if (scrapRenderScheduled) {
+    return;
+  }
+
+  scrapRenderScheduled = true;
+  window.requestAnimationFrame(() => {
+    scrapRenderScheduled = false;
+    renderScrapResults(currentScrapResults);
+  });
+}
+
+function setScrapProgressStatus() {
+  const total = currentScrapResults.length;
+  if (!total) {
+    return;
+  }
+
+  const queued = currentScrapResults.filter((row) => row.status === "queued").length;
+  const fetching = currentScrapResults.filter((row) => row.status === "fetching").length;
+  const completed = currentScrapResults.filter((row) => row.status === "success").length;
+  const failed = currentScrapResults.filter((row) => row.status === "failed").length;
+
+  if (queued || fetching) {
+    setScrapStatus(`Processing ${completed + failed}/${total}. Fetching: ${fetching}, queued: ${queued}.`);
+    return;
+  }
+
+  if (completed || failed) {
+    setScrapStatus(`Finished. ${completed} completed, ${failed} failed.`);
+  }
 }
 
 function renderScrapResults(rows) {
