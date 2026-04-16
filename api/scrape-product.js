@@ -980,7 +980,7 @@ function extractDealStatusFromText(text, lines = [], sellingPrice = "", mrp = ""
     }
 
     const dealText = normalizeDealText(match[1]);
-    if (dealText && !looksLikeNoise(dealText) && !isSuspiciousDealText(dealText)) {
+    if (dealText && isLikelyDealText(dealText) && !looksLikeNoise(dealText) && !isSuspiciousDealText(dealText)) {
       return `Active deal detected: ${dealText}`;
     }
   }
@@ -1072,11 +1072,40 @@ function stripMarkdownLinks(value) {
 function normalizeDealText(value) {
   return cleanText(stripMarkdownLinks(value))
     .replace(/\s+/g, " ")
+    .replace(/\[\]\(/g, " ")
     .replace(/\s*https?:\/\/\S+/gi, "")
     .replace(/\]\([^)]+/g, "")
+    .replace(/\[\s*view[^\]]*\]/gi, " ")
+    .replace(/\bview products?\b/gi, " ")
     .replace(/\s{2,}/g, " ")
     .replace(/\.$/, "")
     .trim();
+}
+
+function isLikelyDealText(value) {
+  const normalized = String(value || "").toLowerCase();
+
+  if (!normalized) {
+    return false;
+  }
+
+  if (isSuspiciousPrice(normalized)) {
+    return false;
+  }
+
+  return (
+    /%/.test(normalized) ||
+    /\boff\b/.test(normalized) ||
+    /\bsave\b/.test(normalized) ||
+    /\bcashback\b/.test(normalized) ||
+    /\bcoupon\b/.test(normalized) ||
+    /\bdeal\b/.test(normalized) ||
+    /\bdiscount\b/.test(normalized) ||
+    /\bbank offer\b/.test(normalized) ||
+    /\bpartner offer\b/.test(normalized) ||
+    /\binstant\b/.test(normalized) ||
+    /\bemi\b/.test(normalized)
+  );
 }
 
 function hasBuyBoxControlsHtml(html, text = "") {
@@ -1331,11 +1360,17 @@ function extractMarkdownSection(text, startHeading, endHeading) {
 function isSuspiciousDealText(value) {
   const normalized = String(value || "").toLowerCase();
   return (
+    !normalized.trim() ||
+    /^\s*(?:₹|rs\.?|inr|\$|£|€)\s?\d[\d,.]*\s*$/i.test(normalized) ||
+    normalized.includes("[](") ||
+    normalized.includes("](") ||
+    normalized.includes("view products") ||
     normalized.length > 120 ||
     normalized.includes("divtoupdate") ||
     normalized.includes("feature_div") ||
     normalized.includes("customclientfunction") ||
     normalized.includes("{") ||
-    normalized.includes("}")
+    normalized.includes("}") ||
+    normalized.includes("officially licensed")
   );
 }

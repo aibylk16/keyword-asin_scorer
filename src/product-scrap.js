@@ -389,8 +389,6 @@ function renderScrapResults(rows) {
           <div class="scrap-meta-grid">
             <article><strong>Source</strong><span>${escapeHtml(row.sourceName || "-")}</span></article>
             <article><strong>Selling Price</strong><span>${escapeHtml(row.sellingPrice || "-")}</span></article>
-            <article><strong>MRP</strong><span>${escapeHtml(row.mrp || "-")}</span></article>
-            <article><strong>Discount</strong><span>${escapeHtml(row.discountPercent || "-")}</span></article>
             <article><strong>Rating</strong><span>${escapeHtml(row.rating || "-")}</span></article>
             <article><strong>Reviews</strong><span>${escapeHtml(row.numberOfReviews || "-")}</span></article>
           </div>
@@ -405,10 +403,6 @@ function renderScrapResults(rows) {
           <div class="scrap-section">
             <strong>Availability</strong>
             <p>${escapeHtml(row.availabilityStatus || "Availability not clear")}</p>
-          </div>
-          <div class="scrap-section">
-            <strong>Deal Detection</strong>
-            <p>${escapeHtml(row.dealStatus || "No active deal detected")}</p>
           </div>
         </article>
       `
@@ -453,13 +447,10 @@ function buildScrapCsv(rows) {
     "Product URL",
     "Product Title",
     "Selling Price",
-    "MRP",
-    "Discount %",
     "Number of Reviews",
     "Rating",
     "Buy Box Winner",
     "Availability Status",
-    "Deal Status",
     "Error Message",
   ];
 
@@ -472,13 +463,10 @@ function buildScrapCsv(rows) {
       row.url,
       row.title,
       row.sellingPrice,
-      row.mrp,
-      row.discountPercent,
       row.numberOfReviews,
       row.rating,
       getBuyBoxDisplayValue(row),
       row.availabilityStatus || "",
-      row.dealStatus || "No active deal detected",
       row.errorMessage,
     ]),
   ];
