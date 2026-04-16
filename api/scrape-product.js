@@ -115,6 +115,7 @@ async function scrapeAmazonProduct(url, fallbackAsin = "", amazonHost = MARKETPL
   let bestProduct = null;
   let bestScore = -1;
   let lastError = null;
+  const successfulAttempts = [];
 
   for (const attempt of attempts) {
     try {
@@ -124,18 +125,35 @@ async function scrapeAmazonProduct(url, fallbackAsin = "", amazonHost = MARKETPL
           ? parseMirrorProduct(raw, asin, attempt.sourceName, url)
           : parseHtmlProduct(raw, asin, attempt.sourceName, attempt.url);
       const score = scoreProductCompleteness(product);
+      successfulAttempts.push({ attempt, product, score });
 
       if (score > bestScore) {
         bestScore = score;
         bestProduct = product;
       }
 
-      if (attempt.kind === "mirror" && product.title && score >= 14) {
+      if (
+        attempt.kind === "html" &&
+        product.title &&
+        product.sellingPrice &&
+        !isSuspiciousPrice(product.sellingPrice) &&
+        (product.numberOfReviews || product.rating)
+      ) {
         return product;
+      }
+
+      if (attempt.kind === "mirror" && product.title && score >= 14) {
+        const mergedMirrorCandidate = mergeAttemptProducts(successfulAttempts, url, asin, amazonHost);
+        return mergedMirrorCandidate?.title ? mergedMirrorCandidate : product;
       }
     } catch (error) {
       lastError = error;
     }
+  }
+
+  const mergedProduct = mergeAttemptProducts(successfulAttempts, url, asin, amazonHost);
+  if (mergedProduct?.title) {
+    return mergedProduct;
   }
 
   if (bestProduct?.title) {
@@ -143,6 +161,113 @@ async function scrapeAmazonProduct(url, fallbackAsin = "", amazonHost = MARKETPL
   }
 
   throw lastError || new Error("No usable product details were extracted");
+}
+
+function mergeAttemptProducts(results, url, asin, amazonHost) {
+  if (!Array.isArray(results) || !results.length) {
+    return null;
+  }
+
+  const ordered = [...results].sort((left, right) => {
+    const leftSourceBoost = left.attempt.kind === "html" ? 3 : 0;
+    const rightSourceBoost = right.attempt.kind === "html" ? 3 : 0;
+    return (right.score + rightSourceBoost) - (left.score + leftSourceBoost);
+  });
+
+  const rankedForPrice = [...results].sort((left, right) => {
+    const leftRank = getPriceSourcePriority(left);
+    const rightRank = getPriceSourcePriority(right);
+    return leftRank - rightRank || right.score - left.score;
+  });
+
+  const rankedForReview = [...results].sort((left, right) => {
+    const leftRank = getReviewSourcePriority(left);
+    const rightRank = getReviewSourcePriority(right);
+    return leftRank - rightRank || right.score - left.score;
+  });
+
+  const best = ordered[0];
+  const titleResult = pickResult(ordered, (entry) => entry.product.title);
+  const bulletResult = pickResult(ordered, (entry) => (entry.product.bulletPoints || []).length);
+  const descriptionResult = pickResult(ordered, (entry) => entry.product.productDescription);
+  const priceResult = pickResult(rankedForPrice, (entry) => entry.product.sellingPrice && !isSuspiciousPrice(entry.product.sellingPrice));
+  const mrpResult = pickResult(rankedForPrice, (entry) => entry.product.mrp && !isSuspiciousPrice(entry.product.mrp));
+  const reviewsResult = pickResult(rankedForReview, (entry) => entry.product.numberOfReviews);
+  const ratingResult = pickResult(rankedForReview, (entry) => entry.product.rating);
+  const sellerResult = pickResult(ordered, (entry) => entry.product.buyBoxWinner);
+  const availabilityResult = pickResult(ordered, (entry) => entry.product.availabilityStatus);
+  const dealResult = pickResult(ordered, (entry) => entry.product.dealStatus && !isSuspiciousDealText(entry.product.dealStatus));
+  const backendKeywordsResult = pickResult(ordered, (entry) => (entry.product.backendKeywords || []).length);
+
+  const sourceNames = [
+    titleResult?.product.sourceName,
+    priceResult?.product.sourceName,
+    reviewsResult?.product.sourceName,
+    ratingResult?.product.sourceName,
+    sellerResult?.product.sourceName,
+  ].filter(Boolean);
+
+  const uniqueSources = [...new Set(sourceNames)];
+  const sourceName = uniqueSources.length > 1 ? uniqueSources.join(" + ") : (uniqueSources[0] || best.product.sourceName);
+
+  return {
+    sourceName,
+    asin: asin || best.product.asin,
+    url: asin ? `${amazonHost}/dp/${asin}` : (best.product.url || url),
+    title: titleResult?.product.title || best.product.title,
+    bulletPoints: bulletResult?.product.bulletPoints || best.product.bulletPoints || [],
+    productDescription: descriptionResult?.product.productDescription || best.product.productDescription || "",
+    sellingPrice: priceResult?.product.sellingPrice || "",
+    mrp: mrpResult?.product.mrp || "",
+    discountPercent: calculateDiscountPercent(priceResult?.product.sellingPrice || "", mrpResult?.product.mrp || ""),
+    numberOfReviews: reviewsResult?.product.numberOfReviews || "",
+    rating: ratingResult?.product.rating || "",
+    availabilityStatus: availabilityResult?.product.availabilityStatus || "",
+    buyBoxAvailable: Boolean((sellerResult?.product.buyBoxAvailable || availabilityResult?.product.buyBoxAvailable || best.product.buyBoxAvailable) && !isUnavailableStatus(availabilityResult?.product.availabilityStatus || best.product.availabilityStatus || "")),
+    buyBoxWinner: sellerResult?.product.buyBoxWinner || "",
+    dealStatus: dealResult?.product.dealStatus || "",
+    backendKeywords: backendKeywordsResult?.product.backendKeywords || best.product.backendKeywords || [],
+  };
+}
+
+function pickResult(results, predicate) {
+  return results.find((entry) => {
+    try {
+      return Boolean(predicate(entry));
+    } catch (error) {
+      return false;
+    }
+  }) || null;
+}
+
+function getPriceSourcePriority(entry) {
+  const product = entry?.product || {};
+  const source = String(product.sourceName || "");
+
+  if (product.sellingPrice && !isSuspiciousPrice(product.sellingPrice) && /Amazon Product Page|Amazon Mobile Product Page/i.test(source)) {
+    return 0;
+  }
+
+  if (product.sellingPrice && !isSuspiciousPrice(product.sellingPrice) && /Jina Mirror/i.test(source)) {
+    return 1;
+  }
+
+  return 9;
+}
+
+function getReviewSourcePriority(entry) {
+  const product = entry?.product || {};
+  const source = String(product.sourceName || "");
+
+  if ((product.numberOfReviews || product.rating) && /Amazon Product Page|Amazon Mobile Product Page/i.test(source)) {
+    return 0;
+  }
+
+  if ((product.numberOfReviews || product.rating) && /Jina Mirror/i.test(source)) {
+    return 1;
+  }
+
+  return 9;
 }
 
 function buildAttempts(url, asin, amazonHost) {
@@ -354,25 +479,45 @@ function extractDescriptionFromHtml(html, bulletPoints) {
 }
 
 function extractReviewCountFromHtml(html) {
+  const scopedHtml = getCurrentReviewHtmlScopes(html);
   const patterns = [
     /<span[^>]*id=["']acrCustomerReviewText["'][^>]*>([\s\S]*?)<\/span>/i,
+    /aria-label=["']([\d,]+)\s+Reviews?["']/i,
     /\[\(([\d,]+)\)\][\s\S]{0,160}averageCustomerReviewsAnchor/i,
     /averageCustomerReviewsAnchor[\s\S]{0,160}\[\(([\d,]+)\)\]/i,
     /([\d,]+)\s+global\s+ratings?/i,
     /([\d,]+)\s+global\s+reviews?/i,
-    /([\d,]+)\s+ratings?/i,
-    /([\d,]+)\s+reviews?/i,
   ];
 
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    if (!match?.[1]) {
-      continue;
-    }
+  for (const scope of scopedHtml) {
+    for (const pattern of patterns) {
+      const match = scope.match(pattern);
+      if (!match?.[1]) {
+        continue;
+      }
 
-    const count = normalizeReviewCount(match[1]);
-    if (count) {
-      return count;
+      const count = normalizeReviewCount(match[1]);
+      if (count) {
+        return count;
+      }
+    }
+  }
+
+  const variantPatterns = [
+    /(?:\\&quot;|&quot;|")reviewCount(?:\\&quot;|&quot;|")\s*:\s*([0-9,]+)/i,
+  ];
+
+  for (const scope of getCurrentVariantReviewHtmlScopes(html)) {
+    for (const pattern of variantPatterns) {
+      const match = scope.match(pattern);
+      if (!match?.[1]) {
+        continue;
+      }
+
+      const count = normalizeReviewCount(match[1]);
+      if (count) {
+        return count;
+      }
     }
   }
 
@@ -380,20 +525,38 @@ function extractReviewCountFromHtml(html) {
 }
 
 function extractRatingFromHtml(html) {
+  const scopedHtml = getCurrentReviewHtmlScopes(html);
   const patterns = [
+    /<span[^>]*id=["']acrPopover["'][^>]*title=["']([\s\S]*?)["'][^>]*>/i,
     /<span[^>]*class=["'][^"']*a-icon-alt[^"']*["'][^>]*>([\s\S]*?)<\/span>/i,
     /([0-5](?:\.\d)?)\s+out of 5 stars/i,
   ];
 
-  for (const pattern of patterns) {
-    const match = html.match(pattern);
-    if (!match?.[1]) {
-      continue;
-    }
+  for (const scope of scopedHtml) {
+    for (const pattern of patterns) {
+      const match = scope.match(pattern);
+      if (!match?.[1]) {
+        continue;
+      }
 
-    const ratingMatch = cleanText(match[1]).match(/([0-5](?:\.\d)?)/);
-    if (ratingMatch?.[1]) {
-      return ratingMatch[1];
+      const ratingMatch = cleanText(match[1]).match(/([0-5](?:\.\d)?)/);
+      if (ratingMatch?.[1]) {
+        return normalizeRatingValue(ratingMatch[1]);
+      }
+    }
+  }
+
+  const variantPatterns = [
+    /(?:\\&quot;|&quot;|")displayString(?:\\&quot;|&quot;|")\s*:\s*(?:\\&quot;|&quot;|")([0-5](?:\.\d)?)\s+out of 5 stars/i,
+    /(?:\\&quot;|&quot;|")value(?:\\&quot;|&quot;|")\s*:\s*([0-5](?:\.\d)?)/i,
+  ];
+
+  for (const scope of getCurrentVariantReviewHtmlScopes(html)) {
+    for (const pattern of variantPatterns) {
+      const match = scope.match(pattern);
+      if (match?.[1]) {
+        return normalizeRatingValue(match[1]);
+      }
     }
   }
 
@@ -474,18 +637,22 @@ function extractDescriptionFromMirror(lines, bulletPoints) {
 
 function extractReviewCountFromText(text) {
   const source = String(text || "");
+  const reviewSection = extractCurrentProductReviewSectionFromText(source);
+  const heroSection = extractCurrentProductTopWindowFromText(source);
   const patterns = [
+    /rated\s+[0-5](?:\.\d)?\s+out of 5 stars from\s+([\d,]+)\s+reviews/i,
     /\[\(([\d,]+)\)\]\([^)]*averageCustomerReviewsAnchor/i,
     /averageCustomerReviewsAnchor[\s\S]{0,160}\[\(([\d,]+)\)\]/i,
-    /customer reviews?[\s\S]{0,240}\[\(([\d,]+)\)\]/i,
     /([\d,]+)\s+global\s+ratings?/i,
     /([\d,]+)\s+global\s+reviews?/i,
-    /([\d,]+)\s+ratings?/i,
-    /([\d,]+)\s+reviews?/i,
   ];
 
+  if (/no customer reviews/i.test(reviewSection)) {
+    return "";
+  }
+
   for (const pattern of patterns) {
-    const match = source.match(pattern);
+    const match = reviewSection.match(pattern) || heroSection.match(pattern);
     if (!match?.[1]) {
       continue;
     }
@@ -496,12 +663,46 @@ function extractReviewCountFromText(text) {
     }
   }
 
+  const variantMatch = heroSection.match(/(?:\\&quot;|&quot;|")reviewCount(?:\\&quot;|&quot;|")\s*:\s*([0-9,]+)/i);
+  if (variantMatch?.[1]) {
+    const count = normalizeReviewCount(variantMatch[1]);
+    if (count) {
+      return count;
+    }
+  }
+
   return "";
 }
 
 function extractRatingFromText(text) {
-  const match = String(text || "").match(/([0-5](?:\.\d)?)\s+out of 5 stars/i);
-  return match?.[1] || "";
+  const source = String(text || "");
+  const reviewSection = extractCurrentProductReviewSectionFromText(source);
+  const heroSection = extractCurrentProductTopWindowFromText(source);
+
+  if (/no customer reviews/i.test(reviewSection)) {
+    return "";
+  }
+
+  const patterns = [
+    /\[\s*([0-5](?:\.\d)?)\s*_?[0-5]?(?:\.\d)?\s*out of 5 stars_?\s*\]\([^)]*averageCustomerReviewsAnchor/i,
+    /([0-5](?:\.\d)?)\s+out of 5 stars/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = heroSection.match(pattern) || reviewSection.match(pattern);
+    if (match?.[1]) {
+      return normalizeRatingValue(match[1]);
+    }
+  }
+
+  const variantMatch =
+    heroSection.match(/(?:\\&quot;|&quot;|")displayString(?:\\&quot;|&quot;|")\s*:\s*(?:\\&quot;|&quot;|")([0-5](?:\.\d)?)\s+out of 5 stars/i) ||
+    heroSection.match(/(?:\\&quot;|&quot;|")value(?:\\&quot;|&quot;|")\s*:\s*([0-5](?:\.\d)?)/i);
+  if (variantMatch?.[1]) {
+    return normalizeRatingValue(variantMatch[1]);
+  }
+
+  return "";
 }
 
 function extractBackendKeywordsFromText(text) {
@@ -683,42 +884,45 @@ function extractOfferSignalsFromText(text, lines = []) {
 }
 
 function extractSellingPriceFromHtml(html, text = "") {
-  const wholeFractionPatterns = [
-    /<span[^>]*class=["'][^"']*a-price-whole[^"']*["'][^>]*>([\s\S]*?)<\/span>\s*<span[^>]*class=["'][^"']*a-price-fraction[^"']*["'][^>]*>([\s\S]*?)<\/span>/i,
-    /"priceAmount"\s*:\s*"?([0-9][\d,]*)"?\s*,\s*"priceFraction"\s*:\s*"?(\d{2})"?/i,
+  const priceScopes = getCurrentPriceHtmlScopes(html, text);
+  const explicitPatterns = [
+    /"displayPrice"\s*:\s*"([^"]+)"/i,
+    /"priceToPay"\s*:\s*"([^"]+)"/i,
+    /id=["']apex-pricetopay-accessibility-label["'][^>]*>\s*([^<]+?)\s*(?:with\s+\d+\s+percent\s+savings)?\s*<\/span>/i,
+    /id=["']corePriceDisplay_desktop_feature_div["'][\s\S]*?<span[^>]*class=["'][^"']*a-offscreen[^"']*["'][^>]*>\s*([^<]+)\s*<\/span>/i,
+    /id=["']corePrice_feature_div["'][\s\S]*?<span[^>]*class=["'][^"']*a-offscreen[^"']*["'][^>]*>\s*([^<]+)\s*<\/span>/i,
+    /id=["']tp_price_block_total_price_ww["'][\s\S]*?<span[^>]*class=["'][^"']*a-offscreen[^"']*["'][^>]*>\s*([^<]+)\s*<\/span>/i,
   ];
 
-  for (const pattern of wholeFractionPatterns) {
-    const match = html.match(pattern);
-    if (!match?.[1] || !match?.[2]) {
-      continue;
-    }
+  for (const scope of priceScopes) {
+    for (const pattern of explicitPatterns) {
+      const match = scope.match(pattern);
+      if (!match?.[1]) {
+        continue;
+      }
 
-    const combined = normalizePriceString(`${cleanText(match[1])}.${cleanText(match[2])}`, detectCurrencyFromContext(html, text));
-    if (combined) {
-      return combined;
+      const candidate = normalizePriceString(match[1], detectCurrencyFromContext(match[1], scope, text));
+      if (candidate && !isSuspiciousPrice(candidate)) {
+        return candidate;
+      }
     }
   }
 
-  const snippets = collectContextSnippets(html, [
-    "priceToPay",
-    "corePriceDisplay_desktop_feature_div",
-    "corePrice_feature_div",
-    "apex_desktop",
-    "tp_price_block_total_price_ww",
-    "priceblock_dealprice",
-    "priceblock_saleprice",
-    "priceblock_ourprice",
-    "price_inside_buybox",
-    "desktop_buybox",
-    "exports_desktop_qualifiedbuybox",
-    "buybox",
-    "a-price",
-    "a-offscreen",
-    "offer-price",
-  ]);
+  for (const snippet of priceScopes) {
+    const wholeFractionMatch =
+      snippet.match(/<span[^>]*class=["'][^"']*a-price-whole[^"']*["'][^>]*>([\s\S]*?)<\/span>\s*<span[^>]*class=["'][^"']*a-price-fraction[^"']*["'][^>]*>([\s\S]*?)<\/span>/i) ||
+      snippet.match(/"priceAmount"\s*:\s*"?([0-9][\d,]*)"?\s*,\s*"priceFraction"\s*:\s*"?(\d{2})"?/i);
 
-  for (const snippet of snippets) {
+    if (wholeFractionMatch?.[1] && wholeFractionMatch?.[2]) {
+      const combined = normalizePriceString(
+        `${cleanText(wholeFractionMatch[1])}.${cleanText(wholeFractionMatch[2])}`,
+        detectCurrencyFromContext(snippet, text)
+      );
+      if (combined && !isSuspiciousPrice(combined)) {
+        return combined;
+      }
+    }
+
     const candidate = extractFirstPriceCandidate(snippet, detectCurrencyFromContext(snippet, text));
     if (candidate) {
       return candidate;
@@ -729,35 +933,28 @@ function extractSellingPriceFromHtml(html, text = "") {
 }
 
 function extractMrpFromHtml(html, text = "", sellingPrice = "") {
+  const priceScopes = getCurrentPriceHtmlScopes(html, text);
   const patterns = [
     /M\.?\s*R\.?\s*P\.?\s*[:\-]?\s*([^<\n]+)/i,
     /List Price\s*[:\-]?\s*([^<\n]+)/i,
     /Was\s*[:\-]?\s*([^<\n]+)/i,
   ];
 
-  for (const pattern of patterns) {
-    const match = html.match(pattern) || text.match(pattern);
-    if (!match?.[1]) {
-      continue;
-    }
+  for (const scope of [...priceScopes, text]) {
+    for (const pattern of patterns) {
+      const match = scope.match(pattern);
+      if (!match?.[1]) {
+        continue;
+      }
 
-    const candidate = extractFirstPriceCandidate(match[1], detectCurrencyFromContext(match[1], text));
-    if (candidate && candidate !== sellingPrice) {
-      return candidate;
+      const candidate = extractFirstPriceCandidate(match[1], detectCurrencyFromContext(match[1], scope, text));
+      if (candidate && candidate !== sellingPrice) {
+        return candidate;
+      }
     }
   }
 
-  const snippets = collectContextSnippets(html, [
-    "basisPrice",
-    "priceBlockStrikePriceString",
-    "listPrice",
-    "a-text-price",
-    "priceBlockSavingsString",
-    "savingsPercentage",
-    "mrp",
-  ]);
-
-  for (const snippet of snippets) {
+  for (const snippet of priceScopes) {
     const candidates = extractPriceCandidates(snippet, detectCurrencyFromContext(snippet, text));
     const candidate = candidates.find((price) => price && price !== sellingPrice);
     if (candidate) {
@@ -804,11 +1001,21 @@ function extractDiscountPercentFromHtml(html, text = "", sellingPrice = "", mrp 
 }
 
 function extractSellingPriceFromText(text) {
+  const currentWindow = extractCurrentProductTopWindowFromText(text);
   const priceSection =
-    extractMarkdownSection(text, "## Price", "## About this Item") ||
-    extractMarkdownSection(text, "## Price", "## Product Description") ||
-    String(text || "");
+    extractMarkdownSection(currentWindow, "## Price", "## About this Item") ||
+    extractMarkdownSection(currentWindow, "## Price", "## Product Description") ||
+    currentWindow;
   const currencyHint = detectCurrencyFromContext(priceSection, text);
+  const displayPriceMatch = priceSection.match(/"displayPrice"\s*:\s*"([^"]+)"/i);
+
+  if (displayPriceMatch?.[1]) {
+    const displayPrice = normalizePriceString(displayPriceMatch[1], currencyHint);
+    if (displayPrice && !isSuspiciousPrice(displayPrice)) {
+      return displayPrice;
+    }
+  }
+
   const patterns = [
     /One-time purchase\s*:?\s*([^\n]+)/i,
     /Subscribe\s*&\s*Save price.*?:\s*([^\n]+)/i,
@@ -828,11 +1035,11 @@ function extractSellingPriceFromText(text) {
     }
   }
 
-  return extractFirstPriceCandidate(priceSection, currencyHint) || extractFirstPriceCandidate(String(text || ""), currencyHint);
+  return extractFirstPriceCandidate(priceSection, currencyHint);
 }
 
 function extractMrpFromText(text, lines = [], sellingPrice = "") {
-  const textBlock = [String(text || ""), ...(lines || [])].join("\n");
+  const textBlock = extractCurrentProductTopWindowFromText([String(text || ""), ...(lines || [])].join("\n"));
   const currencyHint = detectCurrencyFromContext(textBlock);
   const patterns = [
     /M\.?\s*R\.?\s*P\.?\s*[:\-]?\s*([^\n]+)/i,
@@ -853,7 +1060,11 @@ function extractMrpFromText(text, lines = [], sellingPrice = "") {
     }
   }
 
-  const candidates = extractPriceCandidates(textBlock, currencyHint);
+  const priceSection =
+    extractMarkdownSection(textBlock, "## Price", "## About this Item") ||
+    extractMarkdownSection(textBlock, "## Price", "## Product Description") ||
+    textBlock;
+  const candidates = extractPriceCandidates(priceSection, currencyHint);
   return candidates.find((price) => price && price !== sellingPrice) || "";
 }
 
@@ -945,7 +1156,7 @@ function extractDealStatusFromHtml(html, text = "", sellingPrice = "", mrp = "",
 }
 
 function extractBuyBoxWinnerFromText(text, lines = [], buyBoxAvailable = false, availabilityStatus = "") {
-  const textBlock = [String(text || ""), ...(lines || [])].join("\n");
+  const textBlock = extractCurrentProductTopWindowFromText([String(text || ""), ...(lines || [])].join("\n"));
   const markdownLineMatch =
     textBlock.match(/(?:Sold by|Shipper\s*\/\s*Seller)\s*\n+\s*\[([^\]]+)\]\([^)]+\)/i) ||
     textBlock.match(/Ships from\s*\n+\s*Amazon[\s\S]{0,240}?(?:Sold by|Shipper\s*\/\s*Seller)\s*\n+\s*\[([^\]]+)\]\([^)]+\)/i);
@@ -1080,21 +1291,25 @@ function isUsableSellerName(value) {
 
 function normalizeSellerName(value) {
   const seller = cleanText(stripMarkdownLinks(value))
+    .replace(/<\/?a\b[^>]*>?/gi, " ")
     .replace(/^(ships from\s*&?\s*)?sold by\s+/i, "")
     .replace(/^(dispatches from\s*&?\s*)?sold by\s+/i, "")
     .replace(/^shipper\s*\/\s*seller\s+/i, "")
     .replace(/^(seller\s*:\s*)/i, "")
     .replace(/\[([^\]]+)\]/g, "$1")
     .replace(/\((?:javascript|https?:\/\/)[^)]+\)/gi, "")
-    .replace(/\b(?:returns|payment|secure transaction|details|quantity|add to cart|buy now)\b.*$/i, "")
+    .replace(/\b(?:ships from|dispatches from)\s+amazon(?: fulfillment)?\.?/i, "")
+    .replace(/\b(?:returns|payment|secure transaction|details|quantity|add to cart|buy now|sold by|ships from|dispatches from)\b.*$/i, "")
     .replace(/\.$/, "")
     .trim();
 
-  if (/^amazon(?:[\s.].*)?$/i.test(seller) || /ships from amazon sold by amazon/i.test(seller)) {
+  const collapsedSeller = collapseRepeatedPhrase(seller);
+
+  if (/^amazon(?:[\s.].*)?$/i.test(collapsedSeller) || /ships from amazon sold by amazon/i.test(collapsedSeller)) {
     return "Amazon";
   }
 
-  return seller;
+  return collapsedSeller;
 }
 
 function stripMarkdownLinks(value) {
@@ -1155,11 +1370,55 @@ function hasBuyBoxControlsText(text, lines = []) {
 }
 
 function extractAvailabilityStatusFromHtml(html, text = "") {
-  return extractAvailabilityStatusFromText(text || cleanText(html));
+  const scopes = [
+    ...collectContextSnippets(html, [
+      "availability",
+      "availabilityInsideBuyBox_feature_div",
+      "desktop_buybox",
+      "buybox",
+      "shipsFromSoldBy_feature_div",
+      "merchantInfoFeature_feature_div",
+    ], 900),
+    String(text || ""),
+  ];
+
+  const positivePatterns = [
+    /only\s+\d+\s+left in stock/i,
+    /in stock/i,
+    /available to ship/i,
+  ];
+  const negativePatterns = [
+    /currently unavailable/i,
+    /temporarily out of stock/i,
+    /out of stock/i,
+    /unavailable/i,
+  ];
+
+  for (const scope of scopes) {
+    const normalizedScope = cleanText(scope);
+    for (const pattern of positivePatterns) {
+      const match = normalizedScope.match(pattern);
+      if (match?.[0]) {
+        return cleanText(match[0]);
+      }
+    }
+  }
+
+  for (const scope of scopes) {
+    const normalizedScope = cleanText(scope);
+    for (const pattern of negativePatterns) {
+      const match = normalizedScope.match(pattern);
+      if (match?.[0]) {
+        return cleanText(match[0]);
+      }
+    }
+  }
+
+  return "";
 }
 
 function extractAvailabilityStatusFromText(text, lines = []) {
-  const textBlock = [String(text || ""), ...(lines || [])].join("\n");
+  const textBlock = extractCurrentProductTopWindowFromText([String(text || ""), ...(lines || [])].join("\n"));
   const patterns = [
     /only\s+\d+\s+left in stock/i,
     /in stock/i,
@@ -1339,7 +1598,121 @@ function extractPriceCandidates(value, currencyHint = "") {
 }
 
 function extractFirstPriceCandidate(value, currencyHint = "") {
-  return extractPriceCandidates(value, currencyHint)[0] || "";
+  return extractSafePriceCandidates(value, currencyHint)[0] || "";
+}
+
+function extractSafePriceCandidates(value, currencyHint = "") {
+  const source = decodeHtml(String(value || ""))
+    .replace(/Ã¢â€šÂ¹/g, "â‚¹")
+    .replace(/Ã‚Â£/g, "Â£")
+    .replace(/Ã¢â€šÂ¬/g, "â‚¬");
+
+  return extractPriceCandidates(source, currencyHint).filter((candidate) => {
+    const candidateText = String(candidate || "");
+    const candidateIndex = source.indexOf(candidateText.replace(/C\$|A\$|₹|\$|Â£|â‚¬|zÅ‚/g, ""));
+    const context =
+      candidateIndex === -1
+        ? source
+        : source.slice(Math.max(0, candidateIndex - 40), Math.min(source.length, candidateIndex + candidateText.length + 40));
+    const hasExplicitCurrency = /(?:â‚¹|Rs\.?|INR|\$|US\$|USD|Â£|â‚¬|EUR|C\$|CAD\$|A\$|AUD\$|PLN|zÅ‚)/i.test(candidateText);
+
+    if (/%/.test(context) && !hasExplicitCurrency) {
+      return false;
+    }
+
+    if (/\b(?:organic|cotton)\b/i.test(context) && !hasExplicitCurrency) {
+      return false;
+    }
+
+    if (
+      !hasExplicitCurrency &&
+      !/\b(?:price|mrp|m\.r\.p|list price|deal|sale|our price|price to pay|displayprice|priceamount|savings)\b/i.test(context)
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function getCurrentPriceHtmlScopes(html, text = "") {
+  const scopes = collectContextSnippets(html, [
+    "apex-pricetopay-accessibility-label",
+    "corePriceDisplay_desktop_feature_div",
+    "corePrice_feature_div",
+    "desktop_buybox_group_1",
+    "tp_price_block_total_price_ww",
+    "price_inside_buybox",
+    "priceblock_ourprice",
+    "priceblock_dealprice",
+    "priceblock_saleprice",
+    "buybox",
+  ], 1400);
+
+  if (text) {
+    scopes.push(String(text || ""));
+  }
+
+  return scopes.length ? scopes : [String(html || "")];
+}
+
+function getCurrentReviewHtmlScopes(html) {
+  const scopes = collectContextSnippets(html, [
+    "averageCustomerReviews",
+    "detailBullets_averageCustomerReviews",
+    "acrCustomerReviewText",
+    "acrPopover",
+  ], 900);
+
+  return scopes.length ? scopes : [String(html || "")];
+}
+
+function getCurrentVariantReviewHtmlScopes(html) {
+  const scopes = collectContextSnippets(html, [
+    "twisterVariations",
+    "CustomerReviews\\&quot;",
+    "\"reviewCount\"",
+    "\\&quot;reviewCount\\&quot;",
+    "\"displayString\"",
+    "\\&quot;displayString\\&quot;",
+  ], 1200);
+
+  return scopes.length ? scopes : [String(html || "")];
+}
+
+function extractCurrentProductTopWindowFromText(text) {
+  const source = String(text || "");
+  const markdownStart = source.indexOf("Markdown Content:");
+  const normalizedSource = markdownStart === -1 ? source : source.slice(markdownStart + "Markdown Content:".length);
+  const endMarkers = [
+    "## Customer reviews",
+    "## Customers also viewed these products",
+    "## Compare with similar items",
+    "## Similar items",
+    "Page 1 of 1",
+    "Back to top",
+  ];
+  let endIndex = normalizedSource.length;
+
+  for (const marker of endMarkers) {
+    const markerIndex = normalizedSource.indexOf(marker);
+    if (markerIndex !== -1 && markerIndex < endIndex) {
+      endIndex = markerIndex;
+    }
+  }
+
+  return normalizedSource.slice(0, Math.min(endIndex, 12000));
+}
+
+function extractCurrentProductReviewSectionFromText(text) {
+  const source = String(text || "");
+  const reviewSection =
+    extractMarkdownSection(source, "## Customer reviews", "Back to top") ||
+    extractMarkdownSection(source, "## Customer reviews", "## Customers also viewed these products") ||
+    extractMarkdownSection(source, "## Customer reviews", "## Similar items") ||
+    "";
+
+  return reviewSection.slice(0, 6000);
 }
 
 function parsePriceAmount(value) {
@@ -1361,6 +1734,31 @@ function calculateDiscountPercent(sellingPrice, mrp) {
 
   const percent = Math.round(((listPrice - selling) / listPrice) * 100);
   return percent > 0 ? `${percent}%` : "";
+}
+
+function normalizeRatingValue(value) {
+  const ratingNumber = Number.parseFloat(String(value || ""));
+  if (!Number.isFinite(ratingNumber)) {
+    return "";
+  }
+
+  return ratingNumber.toFixed(1);
+}
+
+function collapseRepeatedPhrase(value) {
+  const text = String(value || "").trim().replace(/\s{2,}/g, " ");
+  const words = text.split(/\s+/).filter(Boolean);
+
+  if (words.length >= 2 && words.length % 2 === 0) {
+    const half = words.length / 2;
+    const firstHalf = words.slice(0, half).join(" ");
+    const secondHalf = words.slice(half).join(" ");
+    if (firstHalf.toLowerCase() === secondHalf.toLowerCase()) {
+      return firstHalf;
+    }
+  }
+
+  return text;
 }
 
 function isSuspiciousPrice(value) {
