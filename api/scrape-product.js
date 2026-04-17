@@ -35,6 +35,9 @@ export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
   response.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  response.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  response.setHeader("Pragma", "no-cache");
+  response.setHeader("Expires", "0");
 
   if (request.method === "OPTIONS") {
     response.status(200).end();
@@ -1595,17 +1598,15 @@ function extractAvailabilityStatusFromHtml(html, text = "") {
     return "Currently unavailable";
   }
 
-  const scopes = [
-    ...collectContextSnippets(html, [
-      "availability",
-      "availabilityInsideBuyBox_feature_div",
-      "desktop_buybox",
-      "buybox",
-      "shipsFromSoldBy_feature_div",
-      "merchantInfoFeature_feature_div",
-    ], 900),
-    String(text || ""),
-  ];
+  const scopes = collectContextSnippets(html, [
+    "availability",
+    "availabilityInsideBuyBox_feature_div",
+    "desktop_buybox",
+    "buybox",
+    "shipsFromSoldBy_feature_div",
+    "merchantInfoFeature_feature_div",
+  ], 900);
+  const fallbackText = cleanText(String(text || ""));
 
   const positivePatterns = [
     /only\s+\d+\s+left in stock/i,
@@ -1626,6 +1627,13 @@ function extractAvailabilityStatusFromHtml(html, text = "") {
       if (match?.[0]) {
         return cleanText(match[0]);
       }
+    }
+  }
+
+  for (const pattern of positivePatterns) {
+    const match = fallbackText.match(pattern);
+    if (match?.[0]) {
+      return cleanText(match[0]);
     }
   }
 

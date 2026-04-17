@@ -190,6 +190,7 @@ async function fetchScrapItem(item) {
       params.set("marketplace", item.marketplace || SCRAP_DEFAULT_MARKETPLACE);
       const response = await fetch(`/api/scrape-product?${params.toString()}`, {
         method: "GET",
+        cache: "no-store",
         headers: {
           Accept: "application/json",
         },
