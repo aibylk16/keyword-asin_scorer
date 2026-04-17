@@ -4,52 +4,5 @@
   "trailingSlash": false,
   "github": {
     "silent": true
-  },
-  "builds": [
-    {
-      "src": "api/*.js",
-      "use": "@vercel/node"
-    },
-    {
-      "src": "*.html",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "styles.css",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "src/**",
-      "use": "@vercel/static"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/fetch-product",
-      "dest": "/api/fetch-product.js"
-    },
-    {
-      "src": "/api/scrape-product",
-      "dest": "/api/scrape-product.js"
-    },
-    {
-      "src": "/keyword",
-      "dest": "/keyword.html"
-    },
-    {
-      "src": "/asin",
-      "dest": "/asin.html"
-    },
-    {
-      "src": "/product-details-scrap",
-      "dest": "/product-details-scrap.html"
-    },
-    {
-      "handle": "filesystem"
-    },
-    {
-      "src": "/",
-      "dest": "/index.html"
-    }
-  ]
+  }
 }
