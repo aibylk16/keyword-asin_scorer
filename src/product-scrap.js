@@ -457,11 +457,7 @@ function renderScrapEmptyState() {
     </tr>
   `;
   scrapSummaryCards.innerHTML = "";
-  scrapCardGrid.innerHTML = `
-    <article class="scrap-empty-card">
-      Product cards with product URL, pricing, reviews, Buy Box winner, and availability will appear here.
-    </article>
-  `;
+  scrapCardGrid.innerHTML = "";
   scrapExportOutput.value = "";
 }
 

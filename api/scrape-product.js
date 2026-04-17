@@ -18,6 +18,18 @@ const MARKETPLACE_HOST_TO_CODE = Object.entries(MARKETPLACE_MAP).reduce(
   {}
 );
 const DEFAULT_MARKETPLACE = "IN";
+const MARKETPLACE_REQUEST_PROFILE = {
+  IN: { currencyCode: "INR", currencySymbol: "₹", acceptLanguage: "en-IN,en;q=0.9", localeCookie: "en_IN" },
+  US: { currencyCode: "USD", currencySymbol: "$", acceptLanguage: "en-US,en;q=0.9", localeCookie: "en_US" },
+  CA: { currencyCode: "CAD", currencySymbol: "C$", acceptLanguage: "en-CA,en;q=0.9", localeCookie: "en_CA" },
+  AU: { currencyCode: "AUD", currencySymbol: "A$", acceptLanguage: "en-AU,en;q=0.9", localeCookie: "en_AU" },
+  UK: { currencyCode: "GBP", currencySymbol: "£", acceptLanguage: "en-GB,en;q=0.9", localeCookie: "en_GB" },
+  DE: { currencyCode: "EUR", currencySymbol: "€", acceptLanguage: "en-GB,en;q=0.9", localeCookie: "en_GB" },
+  FR: { currencyCode: "EUR", currencySymbol: "€", acceptLanguage: "en-GB,en;q=0.9", localeCookie: "en_GB" },
+  IT: { currencyCode: "EUR", currencySymbol: "€", acceptLanguage: "en-GB,en;q=0.9", localeCookie: "en_GB" },
+  ES: { currencyCode: "EUR", currencySymbol: "€", acceptLanguage: "en-GB,en;q=0.9", localeCookie: "en_GB" },
+  PL: { currencyCode: "PLN", currencySymbol: "zł", acceptLanguage: "en-GB,en;q=0.9", localeCookie: "en_GB" },
+};
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -72,14 +84,25 @@ function normalizeMarketplace(value) {
 
 function inferMarketplaceFromUrl(value) {
   try {
-    const normalized = /^https?:\/\//i.test(String(value || "").trim())
-      ? String(value || "").trim()
-      : `https://${String(value || "").trim()}`;
+    const rawValue = String(value || "").trim();
+    const normalized = /^https?:\/\//i.test(rawValue)
+      ? rawValue
+      : `https://${rawValue}`;
     const hostname = new URL(normalized).hostname.toLowerCase();
-    return MARKETPLACE_HOST_TO_CODE[hostname] || "";
+    if (MARKETPLACE_HOST_TO_CODE[hostname]) {
+      return MARKETPLACE_HOST_TO_CODE[hostname];
+    }
+
+    const embeddedHost = rawValue.match(/(?:https?:\/\/)?(www\.amazon\.[a-z.]+)/i)?.[1]?.toLowerCase() || "";
+    return MARKETPLACE_HOST_TO_CODE[embeddedHost] || "";
   } catch (error) {
     return "";
   }
+}
+
+function getMarketplaceRequestProfile(value) {
+  const marketplaceCode = inferMarketplaceFromUrl(value) || DEFAULT_MARKETPLACE;
+  return MARKETPLACE_REQUEST_PROFILE[marketplaceCode] || MARKETPLACE_REQUEST_PROFILE[DEFAULT_MARKETPLACE];
 }
 
 function getAmazonHost(marketplace, requestedUrl = "") {
@@ -415,6 +438,7 @@ function buildAttempts(url, asin, amazonHost) {
 }
 
 async function fetchAttempt(attempt) {
+  const requestProfile = getMarketplaceRequestProfile(attempt.url);
   const userAgent =
     attempt.kind === "mirror"
       ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"
@@ -430,13 +454,14 @@ async function fetchAttempt(attempt) {
     const result = await fetch(attempt.url, {
       headers: {
         "user-agent": userAgent,
-        "accept-language": "en-IN,en;q=0.9",
+        "accept-language": requestProfile.acceptLanguage,
         accept:
           attempt.kind === "mirror"
             ? "text/plain,text/html;q=0.9,*/*;q=0.8"
             : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "cache-control": "no-cache",
         pragma: "no-cache",
+        cookie: `i18n-prefs=${requestProfile.currencyCode}; lc-main=${requestProfile.localeCookie}; currency-of-preference=${requestProfile.currencyCode};`,
       },
       signal: controller.signal,
     });
@@ -464,10 +489,11 @@ async function fetchAttempt(attempt) {
 function parseHtmlProduct(html, fallbackAsin = "", sourceName = "Amazon", url = "") {
   const asin = fallbackAsin || extractAsin(url) || extractAsin(html);
   const canonicalHost = getAmazonHost(DEFAULT_MARKETPLACE, url);
+  const expectedCurrency = getMarketplaceRequestProfile(canonicalHost || url).currencySymbol;
   const title = extractTitleFromHtml(html);
   const bulletPoints = extractBulletPointsFromHtml(html);
   const description = extractDescriptionFromHtml(html, bulletPoints);
-  const offerSignals = extractOfferSignalsFromHtml(html);
+  const offerSignals = extractOfferSignalsFromHtml(html, expectedCurrency);
   const numberOfReviews = extractReviewCountFromHtml(html);
   const rating = extractRatingFromHtml(html);
   const backendKeywords = extractBackendKeywordsFromHtml(html);
@@ -495,6 +521,7 @@ function parseHtmlProduct(html, fallbackAsin = "", sourceName = "Amazon", url = 
 function parseMirrorProduct(text, fallbackAsin = "", sourceName = "Jina Mirror", url = "") {
   const asin = fallbackAsin || extractAsin(url) || extractAsin(text);
   const canonicalHost = getAmazonHost(DEFAULT_MARKETPLACE, url);
+  const expectedCurrency = getMarketplaceRequestProfile(canonicalHost || url).currencySymbol;
   const lines = String(text || "")
     .replace(/\r/g, "")
     .split("\n")
@@ -504,7 +531,7 @@ function parseMirrorProduct(text, fallbackAsin = "", sourceName = "Jina Mirror",
   const title = extractTitleFromMirror(lines);
   const bulletPoints = extractBulletPointsFromMirror(lines);
   const description = extractDescriptionFromMirror(lines, bulletPoints);
-  const offerSignals = extractOfferSignalsFromText(text, lines);
+  const offerSignals = extractOfferSignalsFromText(text, lines, expectedCurrency);
   const numberOfReviews = extractReviewCountFromText(text);
   const rating = extractRatingFromText(text);
   const backendKeywords = extractBackendKeywordsFromText(text);
@@ -962,15 +989,18 @@ function decodeHtml(value) {
     .replace(/&apos;/g, "'")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
+    .replace(/&pound;|&#163;/gi, "£")
+    .replace(/&euro;|&#8364;/gi, "€")
+    .replace(/&#8377;|&#x20b9;/gi, "₹")
     .replace(/&nbsp;/g, " ");
 }
 
-function extractOfferSignalsFromHtml(html) {
+function extractOfferSignalsFromHtml(html, expectedCurrency = "") {
   const text = cleanText(html);
   const availabilityStatus = extractAvailabilityStatusFromHtml(html, text);
   const buyBoxAvailable = hasBuyBoxControlsHtml(html, text) && !isUnavailableStatus(availabilityStatus);
-  const sellingPrice = extractSellingPriceFromHtml(html, text);
-  const mrp = extractMrpFromHtml(html, text, sellingPrice);
+  const sellingPrice = extractSellingPriceFromHtml(html, text, expectedCurrency);
+  const mrp = extractMrpFromHtml(html, text, sellingPrice, expectedCurrency);
   const discountPercent = extractDiscountPercentFromHtml(html, text, sellingPrice, mrp);
   const buyBoxWinner = extractBuyBoxWinnerFromHtml(html, text, buyBoxAvailable, availabilityStatus);
   const dealStatus = extractDealStatusFromHtml(html, text, sellingPrice, mrp, discountPercent);
@@ -986,12 +1016,12 @@ function extractOfferSignalsFromHtml(html) {
   });
 }
 
-function extractOfferSignalsFromText(text, lines = []) {
+function extractOfferSignalsFromText(text, lines = [], expectedCurrency = "") {
   const textBlock = [String(text || ""), ...(lines || [])].join("\n");
   const availabilityStatus = extractAvailabilityStatusFromText(textBlock, lines);
   const buyBoxAvailable = hasBuyBoxControlsText(textBlock, lines) && !isUnavailableStatus(availabilityStatus);
-  const sellingPrice = extractSellingPriceFromText(textBlock);
-  const mrp = extractMrpFromText(textBlock, lines, sellingPrice);
+  const sellingPrice = extractSellingPriceFromText(textBlock, expectedCurrency);
+  const mrp = extractMrpFromText(textBlock, lines, sellingPrice, expectedCurrency);
   const discountPercent = extractDiscountPercentFromText(textBlock, lines, sellingPrice, mrp);
   const buyBoxWinner = extractBuyBoxWinnerFromText(textBlock, lines, buyBoxAvailable, availabilityStatus);
   const dealStatus = extractDealStatusFromText(textBlock, lines, sellingPrice, mrp, discountPercent);
@@ -1026,7 +1056,33 @@ function normalizeOfferSignals(signals) {
   };
 }
 
-function extractSellingPriceFromHtml(html, text = "") {
+function hasUnavailableProductPageMarkers(value) {
+  const source = String(value || "");
+
+  return (
+    /data-displayreason=["']out_of_stock["']/i.test(source) ||
+    /cerberusSharedCards-widgetTypeOos/i.test(source) ||
+    /id=["']outOfStock["']/i.test(source) ||
+    /primary-availability-message[^>]*>\s*currently unavailable/i.test(source) ||
+    (/currently unavailable/i.test(source) && /we don't know when or if this item will be back in stock/i.test(source))
+  );
+}
+
+function hasUnavailableProductTextMarkers(value) {
+  const source = String(value || "");
+
+  return (
+    /currently unavailable/i.test(source) ||
+    /temporarily out of stock/i.test(source) ||
+    (/out of stock/i.test(source) && /we don't know when or if this item will be back in stock/i.test(source))
+  );
+}
+
+function extractSellingPriceFromHtml(html, text = "", expectedCurrency = "") {
+  if (hasUnavailableProductPageMarkers(html)) {
+    return "";
+  }
+
   const priceScopes = getCurrentPriceHtmlScopes(html, text);
   const explicitPatterns = [
     /"displayPrice"\s*:\s*"([^"]+)"/i,
@@ -1044,7 +1100,7 @@ function extractSellingPriceFromHtml(html, text = "") {
         continue;
       }
 
-      const candidate = normalizePriceString(match[1], detectCurrencyFromContext(match[1], scope, text));
+      const candidate = normalizePriceString(match[1], expectedCurrency || detectCurrencyFromContext(match[1], scope, text));
       if (candidate && !isSuspiciousPrice(candidate)) {
         return candidate;
       }
@@ -1059,23 +1115,29 @@ function extractSellingPriceFromHtml(html, text = "") {
     if (wholeFractionMatch?.[1] && wholeFractionMatch?.[2]) {
       const combined = normalizePriceString(
         `${cleanText(wholeFractionMatch[1])}.${cleanText(wholeFractionMatch[2])}`,
-        detectCurrencyFromContext(snippet, text)
+        expectedCurrency || detectCurrencyFromContext(snippet, text)
       );
       if (combined && !isSuspiciousPrice(combined)) {
         return combined;
       }
     }
 
-    const candidate = extractFirstPriceCandidate(snippet, detectCurrencyFromContext(snippet, text));
+    const candidate = extractFirstPriceCandidate(snippet, expectedCurrency || detectCurrencyFromContext(snippet, text));
     if (candidate) {
       return candidate;
     }
   }
 
-  return extractSellingPriceFromText(text || html);
+  return hasUnavailableProductTextMarkers(text || html)
+    ? ""
+    : extractSellingPriceFromText(text || html, expectedCurrency);
 }
 
-function extractMrpFromHtml(html, text = "", sellingPrice = "") {
+function extractMrpFromHtml(html, text = "", sellingPrice = "", expectedCurrency = "") {
+  if (hasUnavailableProductPageMarkers(html)) {
+    return "";
+  }
+
   const priceScopes = getCurrentPriceHtmlScopes(html, text);
   const patterns = [
     /M\.?\s*R\.?\s*P\.?\s*[:\-]?\s*([^<\n]+)/i,
@@ -1090,7 +1152,7 @@ function extractMrpFromHtml(html, text = "", sellingPrice = "") {
         continue;
       }
 
-      const candidate = extractFirstPriceCandidate(match[1], detectCurrencyFromContext(match[1], scope, text));
+      const candidate = extractFirstPriceCandidate(match[1], expectedCurrency || detectCurrencyFromContext(match[1], scope, text));
       if (candidate && candidate !== sellingPrice) {
         return candidate;
       }
@@ -1098,14 +1160,16 @@ function extractMrpFromHtml(html, text = "", sellingPrice = "") {
   }
 
   for (const snippet of priceScopes) {
-    const candidates = extractPriceCandidates(snippet, detectCurrencyFromContext(snippet, text));
+    const candidates = extractPriceCandidates(snippet, expectedCurrency || detectCurrencyFromContext(snippet, text));
     const candidate = candidates.find((price) => price && price !== sellingPrice);
     if (candidate) {
       return candidate;
     }
   }
 
-  return extractMrpFromText(text || html, [], sellingPrice);
+  return hasUnavailableProductTextMarkers(text || html)
+    ? ""
+    : extractMrpFromText(text || html, [], sellingPrice, expectedCurrency);
 }
 
 function extractDiscountPercentFromHtml(html, text = "", sellingPrice = "", mrp = "") {
@@ -1143,9 +1207,13 @@ function extractDiscountPercentFromHtml(html, text = "", sellingPrice = "", mrp 
   return calculatedDiscount;
 }
 
-function extractSellingPriceFromText(text) {
+function extractSellingPriceFromText(text, expectedCurrency = "") {
   const currentWindow = extractCurrentProductTopWindowFromText(text);
   const buyBoxWindow = extractCurrentBuyBoxWindowFromText(text);
+  if (hasUnavailableProductTextMarkers(`${buyBoxWindow}\n${currentWindow}`)) {
+    return "";
+  }
+
   const priceSection =
     extractMarkdownSection(buyBoxWindow, "## Price", "## About this Item") ||
     extractMarkdownSection(buyBoxWindow, "## Price", "## Product Description") ||
@@ -1153,7 +1221,7 @@ function extractSellingPriceFromText(text) {
     extractMarkdownSection(currentWindow, "## Price", "## About this Item") ||
     extractMarkdownSection(currentWindow, "## Price", "## Product Description") ||
     currentWindow;
-  const currencyHint = detectCurrencyFromContext(priceSection, buyBoxWindow, currentWindow, text);
+  const currencyHint = expectedCurrency || detectCurrencyFromContext(priceSection, buyBoxWindow, currentWindow, text);
   const displayPriceMatch = priceSection.match(/"displayPrice"\s*:\s*"([^"]+)"/i) || buyBoxWindow.match(/"displayPrice"\s*:\s*"([^"]+)"/i);
 
   if (displayPriceMatch?.[1]) {
@@ -1185,9 +1253,13 @@ function extractSellingPriceFromText(text) {
   return extractFirstPriceCandidate(priceSection, currencyHint);
 }
 
-function extractMrpFromText(text, lines = [], sellingPrice = "") {
+function extractMrpFromText(text, lines = [], sellingPrice = "", expectedCurrency = "") {
   const textBlock = extractCurrentBuyBoxWindowFromText([String(text || ""), ...(lines || [])].join("\n"));
-  const currencyHint = detectCurrencyFromContext(textBlock);
+  if (hasUnavailableProductTextMarkers(textBlock)) {
+    return "";
+  }
+
+  const currencyHint = expectedCurrency || detectCurrencyFromContext(textBlock);
   const patterns = [
     /M\.?\s*R\.?\s*P\.?\s*[:\-]?\s*([^\n]+)/i,
     /List Price\s*[:\-]?\s*([^\n]+)/i,
@@ -1448,6 +1520,7 @@ function normalizeSellerName(value) {
     .replace(/\((?:javascript|https?:\/\/)[^)]+\)/gi, "")
     .replace(/\b(?:ships from|dispatches from)\s+amazon(?: fulfillment)?\.?/i, "")
     .replace(/\b(?:returns|payment|secure transaction|details|quantity|add to cart|buy now|sold by|ships from|dispatches from)\b.*$/i, "")
+    .replace(/\b(?:and|&)\s*$/i, "")
     .replace(/[).,:;]+$/g, "")
     .trim();
 
@@ -1518,6 +1591,10 @@ function hasBuyBoxControlsText(text, lines = []) {
 }
 
 function extractAvailabilityStatusFromHtml(html, text = "") {
+  if (hasUnavailableProductPageMarkers(html)) {
+    return "Currently unavailable";
+  }
+
   const scopes = [
     ...collectContextSnippets(html, [
       "availability",
@@ -1567,6 +1644,10 @@ function extractAvailabilityStatusFromHtml(html, text = "") {
 
 function extractAvailabilityStatusFromText(text, lines = []) {
   const textBlock = extractCurrentBuyBoxWindowFromText([String(text || ""), ...(lines || [])].join("\n"));
+  if (hasUnavailableProductTextMarkers(textBlock)) {
+    return "Currently unavailable";
+  }
+
   const positivePatterns = [
     /only\s+\d+\s+left in stock/i,
     /in stock/i,
@@ -1719,8 +1800,46 @@ function collectContextSnippets(value, tokens, radius = 1000) {
   return snippets;
 }
 
+function normalizeCurrencyArtifacts(value) {
+  return decodeHtml(String(value || ""))
+    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¹|ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹|Ã¢â€šÂ¹|â‚¹/g, "₹")
+    .replace(/ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â£|Ãƒâ€šÃ‚Â£|Ã‚Â£|Â£/g, "£")
+    .replace(/ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬|ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬|Ã¢â€šÂ¬|â‚¬/g, "€")
+    .replace(/zÃƒâ€¦Ã¢â‚¬Å¡|zÃ…â€š/gi, "zł")
+    .replace(/\u00a0/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function detectCurrencyFromContext(...sources) {
-  const combined = sources.join(" ");
+  const combined = normalizeCurrencyArtifacts(sources.join(" "));
+  if (/(?:₹|Rs\.?|INR)/i.test(combined)) {
+    return "₹";
+  }
+
+  if (/(?:£|GBP)/i.test(combined)) {
+    return "£";
+  }
+
+  if (/(?:€|EUR)/i.test(combined)) {
+    return "€";
+  }
+
+  if (/(?:CAD\$|CAD|C\$|CA\$)/i.test(combined)) {
+    return "C$";
+  }
+
+  if (/(?:AUD\$|AUD|A\$)/i.test(combined)) {
+    return "A$";
+  }
+
+  if (/(?:PLN|zł)/i.test(combined)) {
+    return "zł";
+  }
+
+  if (/\$/i.test(combined)) {
+    return "$";
+  }
   if (/₹|â‚¹|Ã¢â€šÂ¹|rs\.?|inr/i.test(combined)) {
     return "₹";
   }
@@ -1753,6 +1872,25 @@ function detectCurrencyFromContext(...sources) {
 }
 
 function normalizePriceString(value, currencyHint = "") {
+  const normalizedValue = normalizeCurrencyArtifacts(value);
+  const standardDirectMatch = normalizedValue.match(/(?:₹|Rs\.?|INR|\$|US\$|USD|£|GBP|€|EUR|C\$|CAD\$|CAD|A\$|AUD\$|AUD|PLN|zł)\s?\d[\d,]*(?:\.\d{1,2})?/i);
+  const standardNumericMatch = normalizedValue.match(/\d[\d,]*(?:\.\d{1,2})?/);
+  const standardBase =
+    standardDirectMatch?.[0] ||
+    (standardNumericMatch?.[0] && currencyHint ? `${currencyHint}${standardNumericMatch[0]}` : "");
+
+  if (standardBase) {
+    return standardBase
+      .replace(/Rs\.?|INR/i, "₹")
+      .replace(/GBP/i, "£")
+      .replace(/US\$|USD/i, "$")
+      .replace(/CAD\$|CAD/i, "C$")
+      .replace(/AUD\$|AUD/i, "A$")
+      .replace(/EUR/i, "€")
+      .replace(/PLN/i, "zł")
+      .replace(/\s+/g, "");
+  }
+
   const normalized = decodeHtml(String(value || ""))
     .replace(/Ã¢â€šÂ¹/g, "₹")
     .replace(/Ã‚Â£/g, "£")
@@ -1778,6 +1916,15 @@ function normalizePriceString(value, currencyHint = "") {
 }
 
 function extractPriceCandidates(value, currencyHint = "") {
+  const normalizedSource = normalizeCurrencyArtifacts(value);
+  const normalizedMatches = [...normalizedSource.matchAll(/(?:₹|Rs\.?|INR|\$|US\$|USD|£|GBP|€|EUR|C\$|CAD\$|CAD|A\$|AUD\$|AUD|PLN|zł)?\s?\d[\d,]*(?:\.\d{1,2})?/gi)]
+    .map((match) => normalizePriceString(match[0], currencyHint))
+    .filter(Boolean);
+
+  if (normalizedMatches.length) {
+    return [...new Set(normalizedMatches)];
+  }
+
   const source = decodeHtml(String(value || ""))
     .replace(/Ã¢â€šÂ¹/g, "₹")
     .replace(/Ã‚Â£/g, "£")
@@ -1794,6 +1941,41 @@ function extractFirstPriceCandidate(value, currencyHint = "") {
 }
 
 function extractSafePriceCandidates(value, currencyHint = "") {
+  const normalizedSource = normalizeCurrencyArtifacts(value);
+  const normalizedCandidates = extractPriceCandidates(normalizedSource, currencyHint).filter((candidate) => {
+    const candidateText = String(candidate || "");
+    const candidateIndex = normalizedSource.indexOf(candidateText.replace(/C\$|A\$|₹|\$|£|€|zł/g, ""));
+    const context =
+      candidateIndex === -1
+        ? normalizedSource
+        : normalizedSource.slice(
+            Math.max(0, candidateIndex - 40),
+            Math.min(normalizedSource.length, candidateIndex + candidateText.length + 40)
+          );
+    const hasExplicitCurrency = /(?:₹|Rs\.?|INR|\$|US\$|USD|£|GBP|€|EUR|C\$|CAD\$|CAD|A\$|AUD\$|AUD|PLN|zł)/i.test(candidateText);
+
+    if (/%/.test(context) && !hasExplicitCurrency) {
+      return false;
+    }
+
+    if (/\b(?:organic|cotton)\b/i.test(context) && !hasExplicitCurrency) {
+      return false;
+    }
+
+    if (
+      !hasExplicitCurrency &&
+      !/\b(?:price|mrp|m\.r\.p|list price|deal|sale|our price|price to pay|displayprice|priceamount|savings)\b/i.test(context)
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+
+  if (normalizedCandidates.length) {
+    return normalizedCandidates;
+  }
+
   const source = decodeHtml(String(value || ""))
     .replace(/ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¹/g, "₹")
     .replace(/Ãƒâ€šÃ‚Â£/g, "£")
