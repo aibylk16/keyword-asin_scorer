@@ -1,4 +1,23 @@
-const DEFAULT_AMAZON_HOST = "https://www.amazon.in";
+const MARKETPLACE_MAP = {
+  IN: "https://www.amazon.in",
+  US: "https://www.amazon.com",
+  CA: "https://www.amazon.ca",
+  AU: "https://www.amazon.com.au",
+  UK: "https://www.amazon.co.uk",
+  DE: "https://www.amazon.de",
+  FR: "https://www.amazon.fr",
+  IT: "https://www.amazon.it",
+  ES: "https://www.amazon.es",
+  PL: "https://www.amazon.pl",
+};
+const MARKETPLACE_HOST_TO_CODE = Object.entries(MARKETPLACE_MAP).reduce(
+  (map, [code, host]) => {
+    map[new URL(host).host] = code;
+    return map;
+  },
+  {}
+);
+const DEFAULT_MARKETPLACE = "IN";
 
 export default async function handler(request, response) {
   response.setHeader("Access-Control-Allow-Origin", "*");
@@ -16,10 +35,10 @@ export default async function handler(request, response) {
   }
 
   const asin = normalizeAsin(request.query.asin);
+  const marketplace = normalizeMarketplace(request.query.marketplace);
   const requestedUrl = typeof request.query.url === "string" ? request.query.url.trim() : "";
-  const productUrl = asin
-    ? `${deriveMarketplaceHost(requestedUrl)}/dp/${asin}`
-    : normalizeUrl(requestedUrl);
+  const amazonHost = getAmazonHost(marketplace, requestedUrl);
+  const productUrl = asin ? `${amazonHost}/dp/${asin}` : normalizeUrl(requestedUrl, amazonHost);
 
   if (!productUrl) {
     response.status(400).json({ error: "Provide asin or url" });
@@ -27,7 +46,7 @@ export default async function handler(request, response) {
   }
 
   try {
-    const product = await fetchAmazonProduct(productUrl, asin);
+    const product = await fetchAmazonProduct(productUrl, asin, amazonHost);
     response.status(200).json(product);
   } catch (error) {
     response.status(502).json({
@@ -46,97 +65,68 @@ function normalizeAsin(value) {
   return /^[A-Z0-9]{10}$/.test(cleaned) ? cleaned : "";
 }
 
-function normalizeUrl(value) {
+function normalizeMarketplace(value) {
+  const code = String(value || "").trim().toUpperCase();
+  return MARKETPLACE_MAP[code] ? code : DEFAULT_MARKETPLACE;
+}
+
+function inferMarketplaceFromUrl(value) {
+  try {
+    const normalized = /^https?:\/\//i.test(String(value || "").trim())
+      ? String(value || "").trim()
+      : `https://${String(value || "").trim()}`;
+    const hostname = new URL(normalized).hostname.toLowerCase();
+    return MARKETPLACE_HOST_TO_CODE[hostname] || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function getAmazonHost(marketplace, requestedUrl = "") {
+  const inferred = inferMarketplaceFromUrl(requestedUrl);
+  return MARKETPLACE_MAP[inferred || normalizeMarketplace(marketplace)];
+}
+
+function normalizeUrl(value, amazonHost = MARKETPLACE_MAP[DEFAULT_MARKETPLACE]) {
   if (!value) {
     return "";
   }
 
-  const asin = normalizeAsin(value);
-  if (asin) {
-    return `${DEFAULT_AMAZON_HOST}/dp/${asin}`;
+  const trimmed = String(value).trim();
+
+  if (/^[A-Z0-9]{10}$/i.test(trimmed)) {
+    return `${amazonHost}/dp/${trimmed.toUpperCase()}`;
   }
 
-  if (/^https?:\/\//i.test(value)) {
-    return value;
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
   }
 
-  return `https://${value}`;
+  if (/amazon\./i.test(trimmed)) {
+    return `https://${trimmed.replace(/^\/+/, "")}`;
+  }
+
+  return `https://${trimmed}`;
 }
 
-function deriveMarketplaceHost(value) {
-  if (typeof value === "string" && /^https?:\/\//i.test(value)) {
-    try {
-      const parsed = new URL(value);
-      if (/amazon\./i.test(parsed.hostname)) {
-        return `${parsed.protocol}//${parsed.hostname}`;
-      }
-    } catch (error) {
-      return DEFAULT_AMAZON_HOST;
-    }
-  }
-
-  return DEFAULT_AMAZON_HOST;
-}
-
-async function fetchAmazonProduct(url, fallbackAsin = "") {
-  const html = await fetchHtml(url);
-  const asin = fallbackAsin || extractAsin(url) || extractAsin(html);
-  const title = extractTitle(html);
-  const highlights = extractHighlights(html, title);
-  const metrics = extractSalesMetrics(html, url);
-
-  if (!title) {
-    throw new Error("Product title could not be extracted from Amazon response");
-  }
-
-  return withSafeProductMetrics({
-    sourceName: "Vercel API",
-    asin,
-    title,
-    highlights,
-    price: metrics.price,
-    currency: metrics.currency,
-    priceValue: metrics.priceValue,
-    bsr: metrics.bsr,
-    category: metrics.category,
-    boughtPastMonth: metrics.boughtPastMonth,
-    estimatedMonthlySales: metrics.estimatedMonthlySales,
-    estimatedRevenue30Days: metrics.estimatedRevenue30Days,
-    estimationBasis: metrics.estimationBasis,
-  });
-}
-
-async function fetchHtml(url) {
-  const userAgents = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-  ];
-  const acceptLanguage = getAcceptLanguage(url);
-
+async function fetchAmazonProduct(url, fallbackAsin = "", amazonHost = MARKETPLACE_MAP[DEFAULT_MARKETPLACE]) {
+  const asin = fallbackAsin || extractAsin(url);
+  const attempts = buildFetchAttempts(url, asin, amazonHost);
   let lastError = null;
 
-  for (const userAgent of userAgents) {
+  for (const attempt of attempts) {
     try {
-      const result = await fetch(url, {
-        headers: {
-          "user-agent": userAgent,
-          "accept-language": acceptLanguage,
-          accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "cache-control": "no-cache",
-        },
-      });
+      const raw = await fetchText(attempt.url, attempt.kind);
+      const parsed =
+        attempt.kind === "mirror"
+          ? parseMirrorResponse(raw, asin, attempt.sourceName)
+          : parseAmazonHtml(raw, attempt.url, attempt.sourceName, asin);
 
-      if (!result.ok) {
-        throw new Error(`Amazon returned ${result.status}`);
+      if (parsed?.title && isUsableTitle(parsed.title)) {
+        return parsed;
       }
 
-      const html = await result.text();
-
-      if (looksBlocked(html)) {
-        throw new Error("Amazon returned a blocked or challenge page");
-      }
-
-      return html;
+      lastError = new Error(`No usable title from ${attempt.sourceName}`);
     } catch (error) {
       lastError = error;
     }
@@ -145,22 +135,100 @@ async function fetchHtml(url) {
   throw lastError || new Error("Amazon fetch failed");
 }
 
-function getAcceptLanguage(url) {
-  const host = getAmazonHost(url);
+function buildFetchAttempts(url, asin, amazonHost) {
+  const directUrl = url;
+  const mobileUrl = asin ? `${amazonHost}/gp/aw/d/${asin}` : url;
+  const searchUrl = asin ? `${amazonHost}/s?k=${asin}` : "";
+  const mirrorBase = asin ? `${amazonHost}/dp/${asin}` : url;
+  const mirrorUrl = `https://r.jina.ai/http://${mirrorBase.replace(/^https?:\/\//i, "")}`;
 
-  if (host.includes("amazon.co.uk")) return "en-GB,en;q=0.9";
-  if (host.includes("amazon.de")) return "de-DE,de;q=0.9,en;q=0.7";
-  if (host.includes("amazon.fr")) return "fr-FR,fr;q=0.9,en;q=0.7";
-  if (host.includes("amazon.es")) return "es-ES,es;q=0.9,en;q=0.7";
-  if (host.includes("amazon.it")) return "it-IT,it;q=0.9,en;q=0.7";
-  if (host.includes("amazon.ca")) return "en-CA,en;q=0.9";
-  if (host.includes("amazon.com.au")) return "en-AU,en;q=0.9";
-
-  return "en-IN,en;q=0.9";
+  return [
+    { url: directUrl, sourceName: "Amazon Product Page", kind: "html" },
+    { url: mobileUrl, sourceName: "Amazon Mobile Product Page", kind: "html" },
+    ...(searchUrl ? [{ url: searchUrl, sourceName: "Amazon Search Page", kind: "html" }] : []),
+    { url: mirrorUrl, sourceName: "Jina Mirror", kind: "mirror" },
+  ];
 }
 
-function looksBlocked(html) {
-  const normalized = html.toLowerCase();
+async function fetchText(url, kind) {
+  const userAgents = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+  ];
+
+  let lastError = null;
+
+  for (const userAgent of userAgents) {
+    try {
+      const result = await fetch(url, {
+        headers: {
+          "user-agent": userAgent,
+          "accept-language": "en-IN,en;q=0.9",
+          accept:
+            kind === "mirror"
+              ? "text/plain,text/html;q=0.9,*/*;q=0.8"
+              : "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "cache-control": "no-cache",
+        },
+      });
+
+      if (!result.ok) {
+        throw new Error(`Source returned ${result.status}`);
+      }
+
+      const text = await result.text();
+
+      if (!text || text.length < 40) {
+        throw new Error("Response too short");
+      }
+
+      if (looksBlocked(text)) {
+        throw new Error("Blocked or challenge response");
+      }
+
+      return text;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("Fetch failed");
+}
+
+function parseAmazonHtml(html, url, sourceName, fallbackAsin = "") {
+  const asin = fallbackAsin || extractAsin(url) || extractAsin(html);
+  const title = extractTitleFromHtml(html);
+  const highlights = extractHighlightsFromHtml(html, title);
+
+  return {
+    sourceName,
+    asin,
+    title,
+    highlights,
+  };
+}
+
+function parseMirrorResponse(text, fallbackAsin = "", sourceName = "Jina Mirror") {
+  const asin = fallbackAsin || extractAsin(text);
+  const lines = String(text || "")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const title = extractTitleFromMirror(lines);
+  const highlights = extractHighlightsFromMirror(lines, title);
+
+  return {
+    sourceName,
+    asin,
+    title,
+    highlights,
+  };
+}
+
+function looksBlocked(value) {
+  const normalized = String(value || "").toLowerCase();
   return (
     normalized.includes("robot check") ||
     normalized.includes("enter the characters you see below") ||
@@ -171,11 +239,11 @@ function looksBlocked(html) {
 }
 
 function extractAsin(value) {
-  const match = String(value).match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
+  const match = String(value || "").match(/\/(?:dp|gp\/product|gp\/aw\/d)\/([A-Z0-9]{10})/i);
   return match ? match[1].toUpperCase() : "";
 }
 
-function extractTitle(html) {
+function extractTitleFromHtml(html) {
   const patterns = [
     /<span[^>]*id=["']productTitle["'][^>]*>([\s\S]*?)<\/span>/i,
     /<h1[^>]*id=["']title["'][^>]*>([\s\S]*?)<\/h1>/i,
@@ -188,12 +256,7 @@ function extractTitle(html) {
       continue;
     }
 
-    const title = cleanText(match[1])
-      .replace(/^buy\s+/i, "")
-      .replace(/\s+at\s+amazon\.[^|:]+.*$/i, "")
-      .replace(/\s*:?\s*amazon\.[^|:]+.*$/i, "")
-      .trim();
-
+    const title = cleanAmazonTitle(cleanText(match[1]));
     if (isUsableTitle(title)) {
       return title;
     }
@@ -202,7 +265,40 @@ function extractTitle(html) {
   return "";
 }
 
-function extractHighlights(html, title) {
+function extractTitleFromMirror(lines) {
+  for (const line of lines) {
+    const cleaned = cleanAmazonTitle(line);
+
+    if (
+      cleaned.length >= 18 &&
+      cleaned.length <= 280 &&
+      !looksLikeNoise(cleaned) &&
+      !cleaned.toLowerCase().startsWith("url source") &&
+      !cleaned.toLowerCase().startsWith("markdown content")
+    ) {
+      return cleaned;
+    }
+  }
+
+  return "";
+}
+
+function cleanAmazonTitle(value) {
+  return decodeHtml(String(value || ""))
+    .replace(/^buy\s+/i, "")
+    .replace(/\s+online at low prices.*$/i, "")
+    .replace(/\s+at\s+amazon\.[^|:]+.*$/i, "")
+    .replace(/\s*:?\s*amazon\.[^|:]+.*$/i, "")
+    .replace(/\s+[|:]\s*home\s*&?\s*kitchen.*$/i, "")
+    .replace(/\s+[|:]\s*home and kitchen.*$/i, "")
+    .replace(/\s+[|:]\s*beauty.*$/i, "")
+    .replace(/\s+[|:]\s*fashion.*$/i, "")
+    .replace(/\s+[|:]\s*toys.*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractHighlightsFromHtml(html, title) {
   const featurePatterns = [
     /<li[^>]*class=["'][^"']*a-spacing-mini[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi,
     /<li[^>]*class=["'][^"']*a-spacing-small[^"']*["'][^>]*>([\s\S]*?)<\/li>/gi,
@@ -229,279 +325,22 @@ function extractHighlights(html, title) {
   return [...new Set(highlights)].slice(0, 8);
 }
 
-function extractSalesMetrics(html, url) {
-  const priceData = extractPriceData(html, url);
-  const rankData = extractBsrData(html);
-  const boughtPastMonth = extractBoughtPastMonth(html);
-  const estimatedMonthlySales = estimateMonthlySales({
-    bsr: rankData.rankNumber,
-    category: rankData.category,
-    boughtPastMonthValue: boughtPastMonth.value,
-  });
-  const estimatedRevenue30Days =
-    estimatedMonthlySales > 0 && priceData.priceValue > 0
-      ? formatCurrencyAmount(estimatedMonthlySales * priceData.priceValue, priceData.currency)
-      : "";
-
-  return {
-    price: priceData.displayPrice,
-    currency: priceData.currency,
-    priceValue: priceData.priceValue,
-    bsr: rankData.displayRank,
-    category: rankData.category,
-    boughtPastMonth: boughtPastMonth.display,
-    estimatedMonthlySales: estimatedMonthlySales > 0 ? formatWholeNumber(estimatedMonthlySales) : "",
-    estimatedRevenue30Days,
-    estimationBasis: buildEstimationBasis({
-      boughtPastMonthDisplay: boughtPastMonth.display,
-      rankDisplay: rankData.displayRank,
-      category: rankData.category,
-    }),
-  };
-}
-
-function extractPriceData(html, url) {
-  const host = getAmazonHost(url);
-  const currencyFallback = inferCurrencyFromHost(host);
-  const blockMatches = [
-    ...html.matchAll(/a-price-symbol[^>]*>(.*?)<\/span>[\s\S]{0,160}?a-price-whole[^>]*>([\s\S]*?)<\/span>[\s\S]{0,80}?a-price-fraction[^>]*>([^<]+)<\/span>/gi),
-  ];
-
-  for (const match of blockMatches) {
-    const symbolText = cleanText(match[1]).trim();
-    const normalizedSymbol = normalizeCurrencySymbol(symbolText);
-
-    if (normalizedSymbol && normalizedSymbol !== currencyFallback) {
-      continue;
-    }
-
-    if (!normalizedSymbol && !host.includes("amazon.in")) {
-      continue;
-    }
-
-    const whole = cleanText(match[2]).replace(/[^0-9,]/g, "");
-    const fraction = cleanText(match[3]).replace(/[^0-9]/g, "");
-    const raw = `${whole.replace(/,/g, "")}.${fraction}`;
-    const priceValue = Number.parseFloat(raw);
-
-    if (Number.isFinite(priceValue) && priceValue > 0) {
-      return {
-        displayPrice: formatCurrencyAmount(priceValue, currencyFallback),
-        priceValue,
-        currency: currencyFallback,
-      };
-    }
-  }
-
-  const text = cleanText(html);
-  const patterns = [
-    /(?:deal price|price|our price|selling price)[^0-9£$€₹]*([£$€₹])\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i,
-    /(?:deal price|price|our price|selling price)[^0-9A-Z]*(INR)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i,
-    /([£$€₹])\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/,
-    /\b(INR)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (!match) {
-      continue;
-    }
-
-    const currency = normalizeCurrencySymbol(match[1] || currencyFallback) || currencyFallback;
-    if (currency && currency !== currencyFallback) {
-      continue;
-    }
-    const priceValue = Number.parseFloat(String(match[2] || "").replace(/,/g, ""));
-
-    if (Number.isFinite(priceValue) && priceValue > 0) {
-      return {
-        displayPrice: formatCurrencyAmount(priceValue, currency),
-        priceValue,
-        currency,
-      };
-    }
-  }
-
-  return {
-    displayPrice: "",
-    priceValue: 0,
-    currency: currencyFallback,
-  };
-}
-
-function extractBsrData(html) {
-  const text = cleanText(html);
-  const patterns = [
-    /best sellers rank[:\s#]*#?\s*([0-9][0-9,]*)\s+in\s+([^#\(\)\[\]\|]+?)(?:\s+\(|\s+#|$)/i,
-    /#\s*([0-9][0-9,]*)\s+in\s+([^#\(\)\[\]\|]+?)(?:\s+\(|\s+#|$)/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (!match) {
-      continue;
-    }
-
-    const rankNumber = Number.parseInt(String(match[1] || "").replace(/,/g, ""), 10);
-    const category = cleanText(match[2]).replace(/^in\s+/i, "").trim();
-
-    if (Number.isFinite(rankNumber) && rankNumber > 0 && category) {
-      return {
-        rankNumber,
-        displayRank: `#${formatWholeNumber(rankNumber)}`,
-        category,
-      };
-    }
-  }
-
-  return {
-    rankNumber: 0,
-    displayRank: "",
-    category: "",
-  };
-}
-
-function extractBoughtPastMonth(html) {
-  const text = cleanText(html);
-  const patterns = [
-    /([0-9][0-9,]*)\+\s+bought in past month/i,
-    /([0-9][0-9,]*)\s+bought in past month/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (!match) {
-      continue;
-    }
-
-    const value = Number.parseInt(String(match[1] || "").replace(/,/g, ""), 10);
-    if (Number.isFinite(value) && value > 0) {
-      return {
-        value,
-        display: `${formatWholeNumber(value)}+ bought in past month`,
-      };
-    }
-  }
-
-  return {
-    value: 0,
-    display: "",
-  };
-}
-
-function estimateMonthlySales({ bsr, category, boughtPastMonthValue }) {
-  if (boughtPastMonthValue > 0) {
-    return boughtPastMonthValue;
-  }
-
-  if (!bsr || bsr <= 0) {
-    return 0;
-  }
-
-  const categoryFactor = getCategoryFactor(category);
-  const estimate = Math.round((220000 * categoryFactor) / Math.pow(bsr, 0.82));
-  return estimate > 0 ? estimate : 0;
-}
-
-function getCategoryFactor(category) {
-  const normalized = String(category || "").toLowerCase();
-
-  if (/(grocery|beauty|health|household)/i.test(normalized)) return 1.15;
-  if (/(home|kitchen|office|pet)/i.test(normalized)) return 1;
-  if (/(clothing|fashion|shoes|jewelry)/i.test(normalized)) return 0.9;
-  if (/(electronics|computers|camera|video games)/i.test(normalized)) return 0.75;
-  if (/(automotive|industrial|scientific|tools)/i.test(normalized)) return 0.7;
-  if (/(books|kindle)/i.test(normalized)) return 0.55;
-
-  return 0.85;
-}
-
-function buildEstimationBasis({ boughtPastMonthDisplay, rankDisplay, category }) {
-  if (boughtPastMonthDisplay) {
-    return "Estimate uses Amazon's public bought-in-past-month signal as the 30-day units floor.";
-  }
-
-  if (rankDisplay && category) {
-    return `Estimate is based on current BSR ${rankDisplay} in ${category}.`;
-  }
-
-  if (rankDisplay) {
-    return `Estimate is based on current BSR ${rankDisplay}.`;
-  }
-
-  return "Not enough data was available to estimate 30-day sales yet.";
-}
-
-function getAmazonHost(url) {
-  try {
-    return new URL(url).host.toLowerCase();
-  } catch (error) {
-    return "www.amazon.in";
-  }
-}
-
-function inferCurrencyFromHost(host) {
-  if (host.includes("amazon.co.uk")) return "£";
-  if (host.includes("amazon.in")) return "₹";
-  if (host.includes("amazon.de") || host.includes("amazon.fr") || host.includes("amazon.es") || host.includes("amazon.it")) return "€";
-  if (host.includes("amazon.ca")) return "C$";
-  if (host.includes("amazon.com.au")) return "A$";
-  return "$";
-}
-
-function normalizeCurrencySymbol(value) {
-  const cleaned = String(value || "").trim().toUpperCase();
-  if (!cleaned) return "";
-  if (cleaned === "INR" || cleaned === "₹") return "₹";
-  if (cleaned === "GBP" || cleaned === "£") return "£";
-  if (cleaned === "EUR" || cleaned === "€") return "€";
-  if (cleaned === "CAD" || cleaned === "C$") return "C$";
-  if (cleaned === "AUD" || cleaned === "A$") return "A$";
-  if (cleaned === "USD" || cleaned === "$") return "$";
-  return "";
-}
-
-function formatCurrencyAmount(value, currency) {
-  const numericValue = Number(value);
-
-  if (!Number.isFinite(numericValue) || numericValue <= 0) {
-    return "";
-  }
-
-  const useDecimals = !Number.isInteger(numericValue);
-  return `${currency}${numericValue.toLocaleString("en-US", {
-    minimumFractionDigits: useDecimals ? 2 : 0,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
-function formatWholeNumber(value) {
-  const numericValue = Number(value);
-  return Number.isFinite(numericValue) && numericValue > 0
-    ? numericValue.toLocaleString("en-US")
-    : "";
-}
-
-function withSafeProductMetrics(product) {
-  return {
-    sourceName: product?.sourceName || "",
-    asin: product?.asin || "",
-    title: product?.title || "",
-    highlights: Array.isArray(product?.highlights) ? product.highlights : [],
-    price: product?.price || "",
-    currency: product?.currency || "",
-    priceValue: Number.isFinite(Number(product?.priceValue)) ? Number(product.priceValue) : 0,
-    bsr: product?.bsr || "",
-    category: product?.category || "",
-    boughtPastMonth: product?.boughtPastMonth || "",
-    estimatedMonthlySales: product?.estimatedMonthlySales || "",
-    estimatedRevenue30Days: product?.estimatedRevenue30Days || "",
-    estimationBasis: product?.estimationBasis || "",
-  };
+function extractHighlightsFromMirror(lines, title) {
+  return lines
+    .map((line) => cleanText(line))
+    .filter(
+      (line) =>
+        line &&
+        line !== title &&
+        line.length >= 20 &&
+        line.length <= 220 &&
+        !looksLikeNoise(line)
+    )
+    .slice(0, 6);
 }
 
 function cleanText(value) {
-  return decodeHtml(String(value).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
+  return decodeHtml(String(value || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
 }
 
 function decodeHtml(value) {
@@ -519,12 +358,11 @@ function isUsableTitle(title) {
     return false;
   }
 
-  const normalized = title.toLowerCase();
-  return !looksLikeNoise(normalized);
+  return !looksLikeNoise(title);
 }
 
 function looksLikeNoise(value) {
-  const normalized = String(value).toLowerCase();
+  const normalized = String(value || "").toLowerCase();
   const noisePatterns = [
     "html lang",
     "head meta",
@@ -538,6 +376,10 @@ function looksLikeNoise(value) {
     "markdown content",
     "if lt ie",
     "endif",
+    "amazon.",
+    "skip to main content",
+    "results for",
+    "need help",
   ];
 
   return noisePatterns.some((pattern) => normalized.includes(pattern));

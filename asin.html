@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASIN Targeting Scoring</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <div class="page-top-actions">
+        <a class="button button-secondary page-home-link" href="/">Home</a>
+      </div>
+
+      <div class="author-badge">Author by Laxmi Kant</div>
+
+      <section class="hero hero-secondary" id="asin-scoring">
+        <p class="eyebrow">ASIN Targeting Scoring</p>
+        <h1>Score target ASINs for ad placement relevance.</h1>
+        <p class="hero-copy">
+          Add your product details and a list of target ASINs to identify the best targets and exclude irrelevant placements.
+        </p>
+      </section>
+
+      <section class="workspace">
+        <form class="panel panel-form" id="asin-form" novalidate>
+          <div class="field">
+            <label for="asin-marketplace">Marketplace</label>
+            <select id="asin-marketplace" name="asinMarketplace">
+              <option value="IN" selected>IN</option>
+              <option value="US">US</option>
+              <option value="CA">CA</option>
+              <option value="AU">AU</option>
+              <option value="UK">UK</option>
+              <option value="DE">DE</option>
+              <option value="FR">FR</option>
+              <option value="IT">IT</option>
+              <option value="ES">ES</option>
+              <option value="PL">PL</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="asin-product-url">Product URL / ASIN</label>
+            <input
+              id="asin-product-url"
+              name="asinProductUrl"
+              type="text"
+              placeholder="Example: B0F269WYKG or https://www.amazon.in/dp/B0F269WYKG"
+            />
+          </div>
+
+          <div class="actions actions-compact">
+            <button class="button button-secondary" id="fetch-asin-product" type="button">
+              Fetch Product Details
+            </button>
+          </div>
+
+          <div class="field">
+            <label for="asin-product-title">Product Title</label>
+            <input
+              id="asin-product-title"
+              name="asinProductTitle"
+              type="text"
+              placeholder="Your product title"
+            />
+          </div>
+
+          <div class="field">
+            <label for="asin-product-description">Product Description / Features</label>
+            <textarea
+              id="asin-product-description"
+              name="asinProductDescription"
+              rows="8"
+              placeholder="Your product description and features"
+            ></textarea>
+          </div>
+
+          <div class="field">
+            <label for="your-product-asin">Your Product ASIN</label>
+            <p class="field-note">
+              Paste either a plain ASIN like <code>B086PV1KWJ</code> or a full Amazon link like
+              <code>https://www.amazon.in/dp/B086PV1KWJ</code>. If you paste only the ASIN, the selected marketplace is used automatically.
+            </p>
+            <input
+              id="your-product-asin"
+              name="yourProductAsin"
+              type="text"
+              placeholder="Example: B0F269WYKG or https://www.amazon.in/dp/B0F269WYKG"
+            />
+          </div>
+
+          <div class="field">
+            <label for="target-asin-list">Target ASIN List</label>
+            <p class="field-note">
+              Paste either plain ASINs like <code>B086PV1KWJ</code> or full Amazon links like
+              <code>https://www.amazon.in/dp/B086PV1KWJ</code>. Plain ASINs will use the selected marketplace.
+            </p>
+            <textarea
+              id="target-asin-list"
+              name="targetAsinList"
+              rows="12"
+              placeholder="Enter one ASIN or Amazon product URL per line, or paste comma-separated values"
+            ></textarea>
+          </div>
+
+          <div class="actions">
+            <button class="button button-primary" type="submit">Score Target ASINs</button>
+            <button class="button button-secondary" id="load-asin-sample" type="button">
+              Load Sample
+            </button>
+            <button class="button button-ghost" id="reset-asin-form" type="button">
+              Clear
+            </button>
+          </div>
+        </form>
+
+        <section class="panel panel-results">
+          <div class="results-header">
+            <div>
+              <p class="eyebrow">Output</p>
+              <h2>ASIN Relevancy Scoring</h2>
+            </div>
+            <div class="results-actions">
+              <button class="button button-secondary" id="copy-asin-output" type="button">
+                Copy Report
+              </button>
+            </div>
+          </div>
+
+          <p class="status-message" id="asin-status-message" aria-live="polite"></p>
+
+          <section class="fetched-panel" id="asin-fetched-panel" hidden>
+            <div class="fetched-header">
+              <div>
+                <p class="eyebrow">Live Product Context</p>
+                <h2>Fetched Product Details</h2>
+              </div>
+            </div>
+            <div class="fetched-grid">
+              <article class="fetched-card">
+                <strong>Source</strong>
+                <p id="asin-fetched-source">Not fetched yet</p>
+              </article>
+              <article class="fetched-card">
+                <strong>Detected ASIN</strong>
+                <p id="asin-fetched-detected-asin">-</p>
+              </article>
+              <article class="fetched-card fetched-card-wide">
+                <strong>Extracted Highlights</strong>
+                <ul id="asin-fetched-highlights" class="highlights-list"></ul>
+              </article>
+            </div>
+          </section>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ASIN</th>
+                  <th>Score</th>
+                  <th>Relevant / Irrelevant</th>
+                  <th>Reason</th>
+                  <th>Product Title</th>
+                </tr>
+              </thead>
+              <tbody id="asin-results-body">
+                <tr class="empty-row">
+                  <td colspan="5">
+                    Add your product and target ASINs, then click
+                    <strong>Score Target ASINs</strong>.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="report-block">
+            <label for="asin-report-output">Final Report</label>
+            <textarea
+              id="asin-report-output"
+              rows="20"
+              readonly
+              placeholder="The ASIN targeting report will appear here."
+            ></textarea>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="./src/main.js" defer></script>
+  </body>
+</html>

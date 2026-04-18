@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Product Details Scrap</title>
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <div class="page-top-actions">
+        <a class="button button-secondary page-home-link" href="/">Home</a>
+      </div>
+
+      <div class="author-badge">Author by Laxmi Kant</div>
+
+      <section class="hero">
+        <p class="eyebrow">Product Details Scrap</p>
+        <h1>Fetch complete Amazon product intelligence from ASINs.</h1>
+        <p class="hero-copy">
+          Paste one or many ASINs, queue them automatically, and extract structured product details like title, price,
+          reviews, rating, Buy Box winner, and availability.
+        </p>
+      </section>
+
+      <section class="workspace">
+        <form class="panel panel-form" id="scrap-form" novalidate>
+          <div class="field">
+            <label for="scrap-marketplace">Marketplace</label>
+            <select id="scrap-marketplace" name="scrapMarketplace">
+              <option value="IN" selected>IN</option>
+              <option value="US">US</option>
+              <option value="CA">CA</option>
+              <option value="AU">AU</option>
+              <option value="UK">UK</option>
+              <option value="DE">DE</option>
+              <option value="FR">FR</option>
+              <option value="IT">IT</option>
+              <option value="ES">ES</option>
+              <option value="PL">PL</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="scrap-asins">ASIN / Amazon URL Input</label>
+            <p class="field-note">
+              Paste one ASIN or Amazon link per line. The app auto-builds the URL as
+              <code id="scrap-marketplace-template">https://www.amazon.in/dp/{ASIN}</code>.
+            </p>
+            <textarea
+              id="scrap-asins"
+              name="scrapAsins"
+              rows="14"
+              placeholder="Example:
+B086PV1KWJ
+https://www.amazon.in/dp/B0DRPC49DP"
+            ></textarea>
+          </div>
+
+          <div class="actions">
+            <button class="button button-primary" type="submit">Fetch Product Details</button>
+            <button class="button button-secondary" id="load-scrap-sample" type="button">Load Sample</button>
+            <button class="button button-ghost" id="reset-scrap-form" type="button">Clear</button>
+          </div>
+        </form>
+
+        <section class="panel panel-results panel-results-scrollable">
+          <div class="results-header">
+            <div>
+              <p class="eyebrow">Output</p>
+              <h2>Product Intelligence</h2>
+            </div>
+            <div class="results-actions">
+              <button class="button button-secondary" id="copy-scrap-csv" type="button">Copy CSV</button>
+              <button class="button button-secondary" id="download-scrap-csv" type="button">Download CSV</button>
+            </div>
+          </div>
+
+          <p class="status-message" id="scrap-status-message" aria-live="polite"></p>
+
+          <div class="summary" id="scrap-summary-cards"></div>
+
+          <div class="table-wrap">
+            <table class="scrap-results-table">
+              <thead>
+                <tr>
+                  <th>ASIN</th>
+                  <th>Product Title</th>
+                  <th>Selling Price</th>
+                  <th>Rating</th>
+                  <th>Reviews</th>
+                  <th>Buy Box</th>
+                  <th>Availability</th>
+                </tr>
+              </thead>
+              <tbody id="scrap-results-body">
+                <tr class="empty-row">
+                  <td colspan="7">
+                    Add ASINs and click <strong>Fetch Product Details</strong>.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="export-block">
+            <label for="scrap-export-output">CSV Preview</label>
+            <textarea
+              id="scrap-export-output"
+              rows="10"
+              readonly
+              placeholder="CSV export preview will appear here."
+            ></textarea>
+          </div>
+
+          <section class="scrap-card-grid" id="scrap-card-grid">
+            <article class="scrap-empty-card">
+              Product cards with product URL, pricing, reviews, Buy Box winner, and availability will appear here.
+            </article>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <script src="./src/product-scrap.js" defer></script>
+  </body>
+</html>

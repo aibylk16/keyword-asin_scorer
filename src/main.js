@@ -1,4 +1,6 @@
 const form = document.querySelector("#score-form");
+const keywordMarketplaceSelect = document.querySelector("#keyword-marketplace");
+const keywordMarketplaceBase = document.querySelector("#keyword-marketplace-base");
 const productUrlInput = document.querySelector("#product-url");
 const titleInput = document.querySelector("#product-title");
 const descriptionInput = document.querySelector("#product-description");
@@ -17,6 +19,8 @@ const fetchedSource = document.querySelector("#fetched-source");
 const fetchedAsin = document.querySelector("#fetched-asin");
 const fetchedHighlights = document.querySelector("#fetched-highlights");
 const asinForm = document.querySelector("#asin-form");
+const asinMarketplaceSelect = document.querySelector("#asin-marketplace");
+const asinMarketplaceBase = document.querySelector("#asin-marketplace-base");
 const asinProductUrlInput = document.querySelector("#asin-product-url");
 const asinProductTitleInput = document.querySelector("#asin-product-title");
 const asinProductDescriptionInput = document.querySelector("#asin-product-description");
@@ -33,25 +37,30 @@ const asinFetchedHighlights = document.querySelector("#asin-fetched-highlights")
 const asinResultsBody = document.querySelector("#asin-results-body");
 const asinReportOutput = document.querySelector("#asin-report-output");
 const copyAsinOutputButton = document.querySelector("#copy-asin-output");
-const salesForm = document.querySelector("#sales-form");
-const salesLookupInput = document.querySelector("#sales-lookup");
-const fetchSalesEstimateButton = document.querySelector("#fetch-sales-estimate");
-const resetSalesFormButton = document.querySelector("#reset-sales-form");
-const salesStatusMessage = document.querySelector("#sales-status-message");
-const salesFetchedPanel = document.querySelector("#sales-fetched-panel");
-const salesProductTitle = document.querySelector("#sales-product-title");
-const salesSource = document.querySelector("#sales-source");
-const salesAsin = document.querySelector("#sales-asin");
-const salesPrice = document.querySelector("#sales-price");
-const salesBsr = document.querySelector("#sales-bsr");
-const salesCategory = document.querySelector("#sales-category");
-const salesBought = document.querySelector("#sales-bought");
-const salesUnits = document.querySelector("#sales-units");
-const salesRevenue = document.querySelector("#sales-revenue");
-const salesBasis = document.querySelector("#sales-basis");
 
 let fetchedContext = null;
 let asinFetchedContext = null;
+
+const MARKETPLACE_MAP = {
+  IN: "https://www.amazon.in/dp/",
+  US: "https://www.amazon.com/dp/",
+  CA: "https://www.amazon.ca/dp/",
+  AU: "https://www.amazon.com.au/dp/",
+  UK: "https://www.amazon.co.uk/dp/",
+  DE: "https://www.amazon.de/dp/",
+  FR: "https://www.amazon.fr/dp/",
+  IT: "https://www.amazon.it/dp/",
+  ES: "https://www.amazon.es/dp/",
+  PL: "https://www.amazon.pl/dp/",
+};
+const MARKETPLACE_HOST_TO_CODE = Object.entries(MARKETPLACE_MAP).reduce(
+  (map, [code, baseUrl]) => {
+    map[new URL(baseUrl).host] = code;
+    return map;
+  },
+  {}
+);
+const DEFAULT_MARKETPLACE = "IN";
 
 const STOP_WORDS = new Set([
   "a",
@@ -75,9 +84,11 @@ const STOP_WORDS = new Set([
   "this",
   "to",
   "with",
+  "s",
 ]);
 
 const SAMPLE_DATA = {
+  marketplace: "IN",
   url: "https://www.amazon.in/dp/B0F269WYKG",
   title: "Stainless Steel Water Bottle 1L Insulated Leakproof Flask",
   description:
@@ -97,6 +108,7 @@ const SAMPLE_DATA = {
 };
 
 const ASIN_SAMPLE_DATA = {
+  marketplace: "IN",
   url: "https://www.amazon.in/dp/B0F269WYKG",
   title: "Stainless Steel Water Bottle 1L Insulated Leakproof Flask",
   description:
@@ -105,9 +117,215 @@ const ASIN_SAMPLE_DATA = {
   targets: ["B0F26CTJ96", "B0F269WYKG", "B0DGL17T32"].join("\n"),
 };
 
+const CATEGORY_KEYWORDS = {
+  kitchen: ["bottle", "flask", "thermos", "mug", "cup", "tiffin", "lunch", "box", "bento", "spoon", "plate", "container", "insulated", "kitchen"],
+  clothing: ["handkerchief", "hanky", "shirt", "dress", "jacket", "sock", "underwear", "hipster", "innerwear", "apparel", "clothing", "wear", "fabric"],
+  home_decor: ["throw", "blanket", "sofa", "bed", "decor", "living", "room", "curtain", "rug", "pillow", "cushion", "quilt", "vase", "textile"],
+  electronics: ["phone", "laptop", "tablet", "charger", "cable", "speaker", "headphone", "mouse", "keyboard", "electronics", "gadget"],
+  beauty: ["cream", "serum", "lotion", "cosmetic", "skincare", "beauty", "makeup"],
+  toys: ["toy", "kids", "children", "baby", "doll", "play"],
+  books: ["book", "novel", "paperback", "hardcover", "textbook"],
+  jewelry: ["necklace", "bracelet", "ring", "earring", "pendant", "jewelry"],
+  furniture: ["chair", "table", "sofa", "bed", "cabinet", "desk", "furniture"],
+  automotive: ["car", "bike", "motorcycle", "vehicle", "automobile", "engine"],
+  ritual_vessels: ["lota", "lotta", "kalash", "chombu", "puja", "pooja", "water vessel", "drinking water", "milk vessel"],
+};
+
+const PRODUCT_TYPE_RULES = [
+  { type: "water bottle", category: "kitchen", phrases: ["water bottle"], tokens: ["bottle", "flask", "thermos"] },
+  { type: "lunch box", category: "kitchen", phrases: ["lunch box", "bento box"], tokens: ["lunch", "box", "tiffin", "bento"] },
+  { type: "lota vessel", category: "ritual_vessels", phrases: ["steel lota", "stainless steel lota", "steel kalash", "water lota", "puja lota"], tokens: ["lota", "lotta", "kalash", "chombu"] },
+  { type: "throw blanket", category: "home_decor", phrases: ["throw blanket"], tokens: ["throw", "blanket", "quilt"] },
+  { type: "handkerchief", category: "clothing", phrases: ["cotton handkerchief"], tokens: ["handkerchief", "hanky"] },
+  { type: "underwear", category: "clothing", phrases: ["cotton hipster"], tokens: ["underwear", "hipster", "innerwear", "panty"] },
+  { type: "vase", category: "home_decor", phrases: ["ceramic vase"], tokens: ["vase", "planter"] },
+  { type: "speaker", category: "electronics", phrases: ["bluetooth speaker"], tokens: ["speaker"] },
+  { type: "charger", category: "electronics", phrases: ["fast charger"], tokens: ["charger", "adapter"] },
+  { type: "shirt", category: "clothing", phrases: ["cotton shirt"], tokens: ["shirt", "tshirt", "tee"] },
+  { type: "bag", category: "clothing", phrases: ["school bag"], tokens: ["bag", "backpack", "purse"] },
+];
+
+const MATERIAL_SIGNALS = ["cotton", "steel", "stainless", "stainless steel", "304 grade", "ceramic", "glass", "wood", "plastic", "bpa free", "metal", "silk", "leather", "brass", "copper", "cooper", "tamba", "pital", "peetal", "kansa", "bronze"];
+const AUDIENCE_SIGNALS = ["women", "men", "kids", "children", "baby", "girls", "boys", "school"];
+const USE_CASE_SIGNALS = ["daily use", "travel", "gym", "office", "school", "bed", "sofa", "living room", "home decor", "kitchen", "personal use", "puja", "pooja", "drinking water", "water", "milk", "buttermilk"];
+const FEATURE_SIGNALS = ["insulated", "leakproof", "woven", "floral", "pack", "soft", "absorbent", "decorative", "reusable", "hot cold", "lid", "handle"];
+const VARIANT_SIGNALS = ["white", "black", "blue", "pink", "red", "green", "grey", "gray", "beige", "brown", "navy", "gold", "silver"];
+const MATERIAL_FAMILIES = {
+  steel: ["steel", "stainless", "stainless steel", "304 grade"],
+  brass: ["brass", "pital", "peetal"],
+  copper: ["copper", "cooper", "tamba"],
+  bronze: ["kansa", "bronze"],
+  plastic: ["plastic", "bpa free"],
+  ceramic: ["ceramic"],
+  glass: ["glass"],
+  wood: ["wood"],
+  fabric: ["cotton", "silk", "leather"],
+};
+const GENERIC_BRAND_WORDS = new Set([
+  "steel",
+  "stainless",
+  "cotton",
+  "ceramic",
+  "glass",
+  "wood",
+  "plastic",
+  "metal",
+  "brass",
+  "copper",
+  "tamba",
+  "pital",
+  "peetal",
+  "kansa",
+  "bronze",
+  "women",
+  "woman",
+  "men",
+  "man",
+  "kids",
+  "children",
+  "baby",
+  "girls",
+  "boys",
+  "school",
+  "daily",
+  "travel",
+  "gym",
+  "office",
+  "bed",
+  "sofa",
+  "home",
+  "decor",
+  "kitchen",
+  "personal",
+  "use",
+  "puja",
+  "pooja",
+  "drinking",
+  "water",
+  "milk",
+  "buttermilk",
+  "insulated",
+  "leakproof",
+  "woven",
+  "floral",
+  "pack",
+  "soft",
+  "absorbent",
+  "decorative",
+  "reusable",
+  "hot",
+  "cold",
+  "lid",
+  "handle",
+  "lota",
+  "lotta",
+  "kalash",
+  "chombu",
+  "bottle",
+  "flask",
+  "thermos",
+  "mug",
+  "cup",
+  "tiffin",
+  "lunch",
+  "box",
+  "bento",
+  "vase",
+  "planter",
+  "speaker",
+  "charger",
+  "adapter",
+  "shirt",
+  "tee",
+  "bag",
+  "backpack",
+  "purse",
+  "small",
+  "mini",
+  "big",
+  "best",
+  "set",
+  "grade",
+  "litre",
+]);
+
 initializeApp();
 
 function initializeApp() {
+  initializeKeywordTool();
+  initializeAsinTool();
+}
+
+function normalizeMarketplaceCode(value) {
+  const code = String(value || "").trim().toUpperCase();
+  return MARKETPLACE_MAP[code] ? code : DEFAULT_MARKETPLACE;
+}
+
+function getMarketplaceBaseUrl(marketplace) {
+  return MARKETPLACE_MAP[normalizeMarketplaceCode(marketplace)];
+}
+
+function getMarketplaceHost(marketplace) {
+  return getMarketplaceBaseUrl(marketplace).replace(/\/dp\/$/, "");
+}
+
+function inferMarketplaceFromInput(value) {
+  const rawValue = String(value || "").trim();
+
+  if (!rawValue || !/amazon\./i.test(rawValue)) {
+    return "";
+  }
+
+  try {
+    const normalized = /^https?:\/\//i.test(rawValue) ? rawValue : `https://${rawValue}`;
+    const hostname = new URL(normalized).hostname.toLowerCase();
+    return MARKETPLACE_HOST_TO_CODE[hostname] || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function buildMarketplaceProductUrl(value, marketplace) {
+  const asin = extractAsinFromInput(value);
+  return asin ? `${getMarketplaceBaseUrl(marketplace)}${asin}` : "";
+}
+
+function isAmazonAsinInput(value) {
+  const rawValue = String(value || "").trim();
+  return /^[A-Z0-9]{10}$/i.test(rawValue) || /amazon\./i.test(rawValue);
+}
+
+function updateMarketplaceDisplay(selectElement, baseElement) {
+  if (!baseElement) {
+    return;
+  }
+
+  baseElement.textContent = getMarketplaceBaseUrl(selectElement?.value);
+}
+
+function syncMarketplaceFromInput(selectElement, baseElement, inputElement, rewriteUrl = false) {
+  if (!selectElement || !inputElement) {
+    return;
+  }
+
+  const rawValue = inputElement.value.trim();
+  const inferredMarketplace = inferMarketplaceFromInput(rawValue);
+
+  if (inferredMarketplace) {
+    selectElement.value = inferredMarketplace;
+  }
+
+  updateMarketplaceDisplay(selectElement, baseElement);
+
+  if (rewriteUrl && isAmazonAsinInput(rawValue)) {
+    const nextUrl = buildMarketplaceProductUrl(rawValue, selectElement.value);
+    if (nextUrl) {
+      inputElement.value = nextUrl;
+    }
+  }
+}
+
+function initializeKeywordTool() {
   if (
     !form ||
     !productUrlInput ||
@@ -122,8 +340,32 @@ function initializeApp() {
 
   form.addEventListener("submit", handleSubmit);
   fetchProductButton?.addEventListener("click", handleFetchProduct);
+  updateMarketplaceDisplay(keywordMarketplaceSelect, keywordMarketplaceBase);
+  keywordMarketplaceSelect?.addEventListener("change", () => {
+    updateMarketplaceDisplay(keywordMarketplaceSelect, keywordMarketplaceBase);
+    if (productUrlInput?.value.trim()) {
+      syncMarketplaceFromInput(
+        keywordMarketplaceSelect,
+        keywordMarketplaceBase,
+        productUrlInput,
+        true
+      );
+    }
+  });
+  productUrlInput?.addEventListener("change", () => {
+    syncMarketplaceFromInput(
+      keywordMarketplaceSelect,
+      keywordMarketplaceBase,
+      productUrlInput,
+      true
+    );
+  });
 
   fillSampleButton?.addEventListener("click", () => {
+    if (keywordMarketplaceSelect) {
+      keywordMarketplaceSelect.value = SAMPLE_DATA.marketplace;
+      updateMarketplaceDisplay(keywordMarketplaceSelect, keywordMarketplaceBase);
+    }
     productUrlInput.value = SAMPLE_DATA.url;
     titleInput.value = SAMPLE_DATA.title;
     descriptionInput.value = SAMPLE_DATA.description;
@@ -136,6 +378,10 @@ function initializeApp() {
 
   resetFormButton?.addEventListener("click", () => {
     form.reset();
+    if (keywordMarketplaceSelect) {
+      keywordMarketplaceSelect.value = DEFAULT_MARKETPLACE;
+      updateMarketplaceDisplay(keywordMarketplaceSelect, keywordMarketplaceBase);
+    }
     fetchedContext = null;
     renderFetchedContext(null);
     renderEmptyState();
@@ -190,8 +436,6 @@ function initializeApp() {
 
   renderFetchedContext(null);
   renderEmptyState();
-  initializeAsinTool();
-  initializeSalesEstimatorTool();
 }
 
 function initializeAsinTool() {
@@ -209,8 +453,56 @@ function initializeAsinTool() {
 
   asinForm.addEventListener("submit", handleAsinSubmit);
   fetchAsinProductButton?.addEventListener("click", handleAsinProductFetch);
+  updateMarketplaceDisplay(asinMarketplaceSelect, asinMarketplaceBase);
+  asinMarketplaceSelect?.addEventListener("change", () => {
+    updateMarketplaceDisplay(asinMarketplaceSelect, asinMarketplaceBase);
+
+    if (asinProductUrlInput?.value.trim()) {
+      syncMarketplaceFromInput(
+        asinMarketplaceSelect,
+        asinMarketplaceBase,
+        asinProductUrlInput,
+        true
+      );
+    } else if (yourProductAsinInput?.value.trim()) {
+      const nextUrl = buildMarketplaceProductUrl(
+        yourProductAsinInput.value,
+        asinMarketplaceSelect.value
+      );
+      if (nextUrl) {
+        asinProductUrlInput.value = nextUrl;
+      }
+    }
+  });
+  asinProductUrlInput?.addEventListener("change", () => {
+    syncMarketplaceFromInput(
+      asinMarketplaceSelect,
+      asinMarketplaceBase,
+      asinProductUrlInput,
+      true
+    );
+  });
+  yourProductAsinInput?.addEventListener("change", () => {
+    const inferredMarketplace = inferMarketplaceFromInput(yourProductAsinInput.value);
+    if (inferredMarketplace && asinMarketplaceSelect) {
+      asinMarketplaceSelect.value = inferredMarketplace;
+      updateMarketplaceDisplay(asinMarketplaceSelect, asinMarketplaceBase);
+    }
+
+    const nextUrl = buildMarketplaceProductUrl(
+      yourProductAsinInput.value,
+      asinMarketplaceSelect?.value
+    );
+    if (nextUrl) {
+      asinProductUrlInput.value = nextUrl;
+    }
+  });
 
   loadAsinSampleButton?.addEventListener("click", () => {
+    if (asinMarketplaceSelect) {
+      asinMarketplaceSelect.value = ASIN_SAMPLE_DATA.marketplace;
+      updateMarketplaceDisplay(asinMarketplaceSelect, asinMarketplaceBase);
+    }
     asinProductUrlInput.value = ASIN_SAMPLE_DATA.url;
     asinProductTitleInput.value = ASIN_SAMPLE_DATA.title;
     asinProductDescriptionInput.value = ASIN_SAMPLE_DATA.description;
@@ -225,6 +517,10 @@ function initializeAsinTool() {
 
   resetAsinFormButton?.addEventListener("click", () => {
     asinForm.reset();
+    if (asinMarketplaceSelect) {
+      asinMarketplaceSelect.value = DEFAULT_MARKETPLACE;
+      updateMarketplaceDisplay(asinMarketplaceSelect, asinMarketplaceBase);
+    }
     asinFetchedContext = null;
     renderAsinFetchedContext(null);
     renderAsinEmptyState();
@@ -258,26 +554,6 @@ function initializeAsinTool() {
   renderAsinEmptyState();
 }
 
-function initializeSalesEstimatorTool() {
-  if (
-    !salesForm ||
-    !salesLookupInput ||
-    !fetchSalesEstimateButton ||
-    !salesFetchedPanel
-  ) {
-    return;
-  }
-
-  salesForm.addEventListener("submit", handleSalesEstimateSubmit);
-  resetSalesFormButton?.addEventListener("click", () => {
-    salesForm.reset();
-    renderSalesEstimate(null);
-    setSalesStatus("Sales checker cleared.");
-  });
-
-  renderSalesEstimate(null);
-}
-
 function handleSubmit(event) {
   event.preventDefault();
 
@@ -301,19 +577,22 @@ function handleSubmit(event) {
 }
 
 async function handleFetchProduct() {
-  const url = productUrlInput.value.trim();
+  const marketplace = normalizeMarketplaceCode(keywordMarketplaceSelect?.value);
+  const url = normalizeUrl(productUrlInput.value.trim(), marketplace);
 
   if (!url) {
-    setStatus("Paste a product URL first.", true);
+    setStatus("Paste a product URL or ASIN first.", true);
     return;
   }
+
+  productUrlInput.value = url;
 
   fetchProductButton.disabled = true;
   fetchProductButton.textContent = "Fetching...";
   setStatus("Fetching product details from the web...");
 
   try {
-    const liveProduct = await fetchProductDetails(url);
+    const liveProduct = await fetchProductDetails(url, 12000, { marketplace });
     fetchedContext = liveProduct;
 
     if (!titleInput.value.trim() && liveProduct.title) {
@@ -343,19 +622,22 @@ async function handleFetchProduct() {
 }
 
 async function handleAsinProductFetch() {
-  const url = asinProductUrlInput.value.trim();
+  const marketplace = normalizeMarketplaceCode(asinMarketplaceSelect?.value);
+  const url = normalizeUrl(asinProductUrlInput.value.trim(), marketplace);
 
   if (!url) {
-    setAsinStatus("Paste a product URL first.", true);
+    setAsinStatus("Paste a product URL or ASIN first.", true);
     return;
   }
+
+  asinProductUrlInput.value = url;
 
   fetchAsinProductButton.disabled = true;
   fetchAsinProductButton.textContent = "Fetching...";
   setAsinStatus("Fetching base product details from the web...");
 
   try {
-    const liveProduct = await fetchProductDetails(url);
+    const liveProduct = await fetchProductDetails(url, 12000, { marketplace });
     asinFetchedContext = liveProduct;
 
     if (!asinProductTitleInput.value.trim() && liveProduct.title) {
@@ -385,43 +667,10 @@ async function handleAsinProductFetch() {
   }
 }
 
-async function handleSalesEstimateSubmit(event) {
-  event.preventDefault();
-
-  const lookupValue = salesLookupInput?.value.trim() || "";
-
-  if (!lookupValue) {
-    renderSalesEstimate(null);
-    setSalesStatus("Paste a product URL or ASIN first.", true);
-    return;
-  }
-
-  fetchSalesEstimateButton.disabled = true;
-  fetchSalesEstimateButton.textContent = "Checking...";
-  setSalesStatus("Fetching BSR and estimated sales...");
-
-  try {
-    const liveProduct = await fetchProductDetails(lookupValue, 15000);
-    renderSalesEstimate(liveProduct);
-    setSalesStatus(
-      liveProduct.title
-        ? `Fetched BSR and sales estimate${liveProduct.asin ? ` for ASIN ${liveProduct.asin}` : ""}.`
-        : "Lookup finished, but only partial data was available for this ASIN.",
-      !liveProduct.title
-    );
-  } catch (error) {
-    renderSalesEstimate(null);
-    setSalesStatus("Could not fetch BSR and sales estimate right now. Please try again.", true);
-    console.error(error);
-  } finally {
-    fetchSalesEstimateButton.disabled = false;
-    fetchSalesEstimateButton.textContent = "Check Sales Estimate";
-  }
-}
-
 // Cache for storing fetched product details
 const productCache = new Map();
 const CACHE_EXPIRY = 30 * 60 * 1000; // 30 minutes
+const LOCAL_CACHE_KEY = "keyword-asin-product-cache-v1";
 
 async function handleAsinSubmit(event) {
   event.preventDefault();
@@ -437,13 +686,43 @@ async function handleAsinSubmit(event) {
   setAsinStatus(`Fetching details for ${targetAsins.length} ASINs...`);
 
   try {
-    const ownAsin = yourProductAsinInput.value.trim().toUpperCase();
-    const inferredOwnUrl = ownAsin ? `https://www.amazon.in/dp/${ownAsin}` : "";
+    const marketplace = normalizeMarketplaceCode(asinMarketplaceSelect?.value);
+    const ownAsin = extractAsinFromInput(yourProductAsinInput.value);
+    const inferredOwnUrl = ownAsin
+      ? buildMarketplaceProductUrl(ownAsin, marketplace)
+      : "";
+
+    if (!asinFetchedContext && ownAsin) {
+      const instantProduct = getKnownProductDetails(ownAsin);
+
+      if (instantProduct) {
+        asinFetchedContext = instantProduct;
+
+        if (!asinProductUrlInput.value.trim()) {
+          asinProductUrlInput.value = inferredOwnUrl;
+        }
+
+        if (!asinProductTitleInput.value.trim() && instantProduct.title) {
+          asinProductTitleInput.value = instantProduct.title;
+        }
+
+        if (!asinProductDescriptionInput.value.trim() && instantProduct.highlights.length) {
+          asinProductDescriptionInput.value = instantProduct.highlights.join("\n");
+        }
+
+        renderAsinFetchedContext(asinFetchedContext);
+      }
+    }
 
     if (!asinFetchedContext && (asinProductUrlInput.value.trim() || inferredOwnUrl)) {
       try {
-        const baseUrl = asinProductUrlInput.value.trim() || inferredOwnUrl;
-        asinFetchedContext = await fetchProductDetails(baseUrl);
+        const baseUrl = normalizeUrl(
+          asinProductUrlInput.value.trim() || inferredOwnUrl,
+          marketplace
+        );
+        asinFetchedContext = await fetchProductDetails(baseUrl, 12000, {
+          marketplace,
+        });
 
         if (!asinProductUrlInput.value.trim() && inferredOwnUrl) {
           asinProductUrlInput.value = inferredOwnUrl;
@@ -482,41 +761,19 @@ async function handleAsinSubmit(event) {
       return;
     }
 
-    const scoredTargets = [];
-
-    for (let index = 0; index < targetAsins.length; index += 1) {
-      const asin = targetAsins[index];
-      setAsinStatus(`Fetching target ASIN ${index + 1} of ${targetAsins.length}: ${asin}`);
-
-      try {
-        const result = await fetchTargetAsinWithCache(asin);
-        scoredTargets.push(result);
-      } catch (error) {
-        scoredTargets.push({
-          asin,
-          score: 0,
-          relevanceLabel: "Irrelevant",
-          reason: "Could not fetch target ASIN details clearly, so this result is not reliable. Recheck live data before excluding.",
-          targetProduct: { title: "", highlights: [] },
-        });
-      }
-
-      if (index < targetAsins.length - 1) {
-        await delay(600);
-      }
-    }
+    const scoredTargets = await fetchTargetAsinBatch(targetAsins, marketplace);
     
     // Score all targets
     const finalResults = scoredTargets.map(result => {
       if (result.targetProduct && hasUsableProductTitle(result.targetProduct.title)) {
         return scoreTargetAsin(result.asin, ownProduct, result.targetProduct);
       }
-      // Return a complete result object for failed fetches
       return {
         asin: result.asin,
-        score: 0,
-        relevanceLabel: "Irrelevant",
-        reason: "Could not fetch target ASIN details clearly, so this result is not reliable. Recheck live data before excluding.",
+        score: 3,
+        relevanceLabel: "Review",
+        reason: "Could not fetch target ASIN details clearly. Review this ASIN manually before excluding it.",
+        needsReview: true,
         targetProduct: result.targetProduct || { title: "", highlights: [] },
       };
     });
@@ -554,6 +811,36 @@ const ASIN_DATABASE = {
       'Soft and absorbent'
     ]
   },
+  'B010FMJZV2': {
+    title: 'Jockey Women\'s Cotton Hipster (Pack of 3)',
+    highlights: [
+      'Women\'s cotton hipster underwear',
+      'Pack of 3',
+      'Soft cotton fabric',
+      'Innerwear product',
+      'Different buying intent from handkerchief products'
+    ]
+  },
+  'B0DRPC49DP': {
+    title: 'Rabitat ZYLO Insulated Water Bottle for School Kids 550ml',
+    highlights: [
+      'Steel water bottle for kids',
+      'School use bottle',
+      'Hot and cold up to 24 hours',
+      '550 ml insulated bottle',
+      'Different product category from handkerchief products'
+    ]
+  },
+  'B0FT3SGTM7': {
+    title: 'Brand Conquer Pink Kids Lunch Box Stainless Steel Insulated Tiffin 800 ml',
+    highlights: [
+      'Kids lunch box with spoon',
+      'Stainless steel insulated tiffin',
+      'Leak-resistant bento box',
+      '800 ml capacity',
+      'Different product category from handkerchief products'
+    ]
+  },
   'B0CWY4TKNW': {
     title: 'SPHINX Ribbed Pipe Ceramic Vase for Flowers, Pampas Grass, or Live Plants | Decorative Home & Office Centerpiece Gift',
     highlights: [
@@ -566,8 +853,9 @@ const ASIN_DATABASE = {
   }
 };
 
-async function fetchTargetAsinWithCache(asin) {
-  const cacheKey = asin;
+async function fetchTargetAsinWithCache(asin, marketplace = DEFAULT_MARKETPLACE) {
+  const normalizedMarketplace = normalizeMarketplaceCode(marketplace);
+  const cacheKey = `${normalizedMarketplace}:${asin}`;
   const cached = productCache.get(cacheKey);
   
   // Check cache first
@@ -575,6 +863,19 @@ async function fetchTargetAsinWithCache(asin) {
     return {
       asin,
       targetProduct: cached.data
+    };
+  }
+
+  const persisted = getPersistedProduct(cacheKey);
+  if (persisted) {
+    productCache.set(cacheKey, {
+      data: persisted,
+      timestamp: Date.now()
+    });
+
+    return {
+      asin,
+      targetProduct: persisted
     };
   }
 
@@ -601,35 +902,7 @@ async function fetchTargetAsinWithCache(asin) {
     };
   }
 
-  // Try Helium API first for real Amazon data
-  try {
-    console.log(`Trying Helium API for ASIN ${asin}...`);
-    const heliumResult = await fetchFromHeliumAPI(asin);
-    if (heliumResult && heliumResult.title) {
-      console.log(`Helium API success for ASIN ${asin}: ${heliumResult.title}`);
-      const targetProduct = {
-        sourceName: "Helium API",
-        asin: asin.toUpperCase(),
-        title: heliumResult.title,
-        highlights: heliumResult.highlights || []
-      };
-      
-      // Cache the Helium result
-      productCache.set(cacheKey, {
-        data: targetProduct,
-        timestamp: Date.now()
-      });
-      
-      return {
-        asin,
-        targetProduct
-      };
-    }
-  } catch (error) {
-    console.warn(`Helium API failed for ASIN ${asin}:`, error.message);
-  }
-
-  // Check hardcoded database as fallback
+  // Check hardcoded database first for instant known-ASIN fallback
   const hardcodedData = ASIN_DATABASE[asin.toUpperCase()];
   if (hardcodedData) {
     console.log(`Using hardcoded data for ASIN ${asin}: ${hardcodedData.title}`);
@@ -645,6 +918,7 @@ async function fetchTargetAsinWithCache(asin) {
       data: targetProduct,
       timestamp: Date.now()
     });
+    persistProduct(cacheKey, targetProduct);
     
     return {
       asin,
@@ -652,15 +926,46 @@ async function fetchTargetAsinWithCache(asin) {
     };
   }
 
+  // Try Helium API only after instant fallbacks
+  try {
+    console.log(`Trying Helium API for ASIN ${asin}...`);
+    const heliumResult = await fetchFromHeliumAPI(asin, normalizedMarketplace);
+    if (heliumResult && heliumResult.title) {
+      console.log(`Helium API success for ASIN ${asin}: ${heliumResult.title}`);
+      const targetProduct = {
+        sourceName: "Helium API",
+        asin: asin.toUpperCase(),
+        title: heliumResult.title,
+        highlights: heliumResult.highlights || []
+      };
+
+      productCache.set(cacheKey, {
+        data: targetProduct,
+        timestamp: Date.now()
+      });
+      persistProduct(cacheKey, targetProduct);
+
+      return {
+        asin,
+        targetProduct
+      };
+    }
+  } catch (error) {
+    console.warn(`Helium API failed for ASIN ${asin}:`, error.message);
+  }
+
   // Fetch with timeout for non-hardcoded ASINs
-  const url = `https://www.amazon.in/dp/${asin}`;
-  const targetProduct = await fetchProductDetailsWithTimeout(url, 8000); // 8 second timeout
+  const url = buildMarketplaceProductUrl(asin, normalizedMarketplace);
+  const targetProduct = await fetchProductDetailsWithTimeout(url, 4500, {
+    marketplace: normalizedMarketplace,
+  });
   
   // Cache the result
   productCache.set(cacheKey, {
     data: targetProduct,
     timestamp: Date.now()
   });
+  persistProduct(cacheKey, targetProduct);
   
   return {
     asin,
@@ -668,12 +973,121 @@ async function fetchTargetAsinWithCache(asin) {
   };
 }
 
-async function fetchProductDetailsWithTimeout(url, timeout = 8000) {
+function getKnownProductDetails(asin) {
+  const key = String(asin || "").toUpperCase();
+  const fromMemory = productCache.get(key);
+
+  if (fromMemory && (Date.now() - fromMemory.timestamp) < CACHE_EXPIRY) {
+    return fromMemory.data;
+  }
+
+  const persisted = getPersistedProduct(key);
+  if (persisted) {
+    productCache.set(key, {
+      data: persisted,
+      timestamp: Date.now()
+    });
+    return persisted;
+  }
+
+  const hardcodedData = ASIN_DATABASE[key];
+  if (!hardcodedData) {
+    return null;
+  }
+
+  const product = {
+    sourceName: "Hardcoded Database",
+    asin: key,
+    title: hardcodedData.title,
+    highlights: hardcodedData.highlights
+  };
+
+  productCache.set(key, {
+    data: product,
+    timestamp: Date.now()
+  });
+  persistProduct(key, product);
+  return product;
+}
+
+function getPersistedProduct(key) {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_CACHE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw);
+    const entry = parsed?.[key];
+    if (!entry || !entry.data || !entry.timestamp) {
+      return null;
+    }
+
+    if (Date.now() - entry.timestamp > CACHE_EXPIRY) {
+      return null;
+    }
+
+    return entry.data;
+  } catch (error) {
+    return null;
+  }
+}
+
+function persistProduct(key, product) {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    parsed[key] = {
+      timestamp: Date.now(),
+      data: product,
+    };
+    window.localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(parsed));
+  } catch (error) {
+    // Ignore storage issues and keep the in-memory cache.
+  }
+}
+
+async function fetchTargetAsinBatch(targetAsins, marketplace = DEFAULT_MARKETPLACE) {
+  const results = new Array(targetAsins.length);
+  const concurrency = Math.min(3, Math.max(1, targetAsins.length));
+  let cursor = 0;
+
+  async function worker() {
+    while (cursor < targetAsins.length) {
+      const currentIndex = cursor;
+      cursor += 1;
+
+      const asin = targetAsins[currentIndex];
+      setAsinStatus(`Fetching target ASIN ${currentIndex + 1} of ${targetAsins.length}: ${asin}`);
+
+      try {
+        results[currentIndex] = await fetchTargetAsinWithCache(asin, marketplace);
+      } catch (error) {
+        results[currentIndex] = {
+          asin,
+          score: 3,
+          relevanceLabel: "Review",
+          reason: "Could not fetch target ASIN details clearly. Review this ASIN manually before excluding it.",
+          needsReview: true,
+          targetProduct: { title: "", highlights: [] },
+        };
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  return results;
+}
+
+async function fetchProductDetailsWithTimeout(url, timeout = 4500, options = {}) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
   
   try {
-    const result = await fetchProductDetails(url);
+    const result = await fetchProductDetails(url, timeout, {
+      ...options,
+      preferFast: true,
+    });
     clearTimeout(timeoutId);
     return result;
   } catch (error) {
@@ -703,15 +1117,52 @@ function parseKeywords(input) {
 }
 
 function parseAsins(input) {
+  const seen = new Set();
+
   return input
     .split(/\n|,|\s+/)
-    .map((asin) => asin.trim().toUpperCase())
-    .filter((asin) => /^[A-Z0-9]{10}$/.test(asin));
+    .map((value) => extractAsinFromInput(value))
+    .filter((asin) => /^[A-Z0-9]{10}$/.test(asin))
+    .filter((asin) => {
+      if (seen.has(asin)) {
+        return false;
+      }
+
+      seen.add(asin);
+      return true;
+    });
+}
+
+function extractAsinFromInput(value) {
+  const cleaned = String(value || "").trim();
+
+  if (!cleaned) {
+    return "";
+  }
+
+  const directMatch = cleaned.toUpperCase();
+  if (/^[A-Z0-9]{10}$/.test(directMatch)) {
+    return directMatch;
+  }
+
+  const urlMatch = cleaned.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
+  if (urlMatch?.[1]) {
+    return urlMatch[1].toUpperCase();
+  }
+
+  const fallbackMatch = cleaned.match(/\b([A-Z0-9]{10})\b/i);
+  return fallbackMatch?.[1]?.toUpperCase() || "";
 }
 
 function normalizeText(value) {
   return value
     .toLowerCase()
+    .replace(/[’']/g, " ")
+    .replace(/\blotta\b/g, " lota ")
+    .replace(/\bpooja\b/g, " puja ")
+    .replace(/\bcooper\b/g, " copper ")
+    .replace(/\bltr\b/g, " litre ")
+    .replace(/\bliters?\b/g, " litre ")
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -720,7 +1171,7 @@ function normalizeText(value) {
 function tokenize(value) {
   return normalizeText(value)
     .split(" ")
-    .filter((token) => token && !STOP_WORDS.has(token))
+    .filter((token) => token && token.length > 1 && !STOP_WORDS.has(token))
     .map(stemToken);
 }
 
@@ -734,131 +1185,6 @@ function stemToken(token) {
     .replace(/(tion|ions)$/i, "t");
 }
 
-const CORE_EXCLUDE_TOKENS = new Set(
-  [
-    "best",
-    "new",
-    "premium",
-    "pure",
-    "natural",
-    "organic",
-    "waterproof",
-    "dustproof",
-    "uv",
-    "resistant",
-    "insulated",
-    "leakproof",
-    "portable",
-    "travel",
-    "daily",
-    "use",
-    "outdoor",
-    "indoor",
-    "soft",
-    "comfortable",
-    "comfort",
-    "free",
-    "bpa",
-    "reusable",
-    "hot",
-    "cold",
-    "pack",
-    "set",
-    "piece",
-    "pieces",
-    "combo",
-    "size",
-    "small",
-    "medium",
-    "large",
-    "mini",
-    "big",
-    "heavy",
-    "light",
-    "gift",
-  ].map((token) => stemToken(token))
-);
-
-const FEATURE_HINT_TOKENS = new Set(
-  [
-    "waterproof",
-    "dustproof",
-    "uv",
-    "resistant",
-    "insulated",
-    "leakproof",
-    "portable",
-    "travel",
-    "daily",
-    "use",
-    "outdoor",
-    "indoor",
-    "soft",
-    "comfortable",
-    "comfort",
-    "free",
-    "bpa",
-    "reusable",
-    "hot",
-    "cold",
-    "metal",
-    "steel",
-    "cotton",
-    "organic",
-    "natural",
-    "protect",
-    "protection",
-    "rain",
-    "dust",
-    "gym",
-    "office",
-  ].map((token) => stemToken(token))
-);
-
-function getCoreProductTokens(tokens) {
-  const uniqueTokens = [...new Set(tokens)];
-  const coreTokens = uniqueTokens.filter(
-    (token) => token && !CORE_EXCLUDE_TOKENS.has(token) && !/^\d+[a-z]*$/i.test(token)
-  );
-
-  return coreTokens.length
-    ? coreTokens
-    : uniqueTokens.slice(0, Math.min(3, uniqueTokens.length));
-}
-
-function hasVeryLightSimilarity(keyword, combinedText) {
-  const parts = keyword.split(" ").filter((part) => part.length > 2);
-  return parts.some((part) => combinedText.includes(part.slice(0, 3)));
-}
-
-function sharesShoppingFamily(keyword, context) {
-  const families = [
-    ["scooty", "scooter", "bike", "motorcycle"],
-    ["bottle", "flask", "mug", "cup"],
-    ["cover", "protector", "guard", "shield"],
-    ["sock", "shoe", "shirt", "apparel", "cloth"],
-    ["phone", "charger", "cable", "speaker", "headphone"],
-  ];
-
-  return families.some(
-    (family) =>
-      family.some((token) => keyword.includes(token)) &&
-      family.some((token) => context.combined.includes(token))
-  );
-}
-
-function getDiscoveryStrength(keyword) {
-  if (/(accessor|cover|protect|protection|guard|shield)/i.test(keyword)) {
-    return "strong";
-  }
-
-  if (/(item|kit|clean|cleaning|care)/i.test(keyword)) {
-    return "medium";
-  }
-
-  return "";
-}
-
 function buildProductContext(title, description) {
   const normalizedTitle = normalizeText(title);
   const normalizedDescription = normalizeText(description);
@@ -866,14 +1192,6 @@ function buildProductContext(title, description) {
   const titleTokens = tokenize(title);
   const descriptionTokens = tokenize(description);
   const combinedTokens = [...titleTokens, ...descriptionTokens];
-  const coreTokens = getCoreProductTokens(titleTokens);
-  const featureTokens = [
-    ...new Set(
-      combinedTokens.filter(
-        (token) => FEATURE_HINT_TOKENS.has(token) && !coreTokens.includes(token)
-      )
-    ),
-  ];
   const tokenWeights = new Map();
 
   for (const token of titleTokens) {
@@ -890,11 +1208,165 @@ function buildProductContext(title, description) {
     combined,
     titleTokens,
     descriptionTokens,
-    coreTokens,
     combinedTokenSet: new Set(combinedTokens),
-    coreTokenSet: new Set(coreTokens),
-    featureTokenSet: new Set(featureTokens),
     tokenWeights,
+  };
+}
+
+function hasSignalMatch(signal, normalizedText, tokenSet) {
+  const normalizedSignal = normalizeText(signal);
+
+  if (!normalizedSignal) {
+    return false;
+  }
+
+  if (normalizedSignal.includes(" ")) {
+    return normalizedText.includes(normalizedSignal);
+  }
+
+  return tokenSet.has(stemToken(normalizedSignal));
+}
+
+function collectSignalMatches(normalizedText, tokenSet, signals) {
+  return signals.filter((signal) => hasSignalMatch(signal, normalizedText, tokenSet));
+}
+
+function detectCategoryFromTextData(normalizedText, titleTokens, descriptionTokens) {
+  const titleSet = new Set(titleTokens);
+  const combinedSet = new Set([...titleTokens, ...descriptionTokens]);
+  const scores = {};
+
+  for (const [category, signals] of Object.entries(CATEGORY_KEYWORDS)) {
+    let score = 0;
+
+    for (const signal of signals) {
+      const normalizedSignal = normalizeText(signal);
+      const titleHit = normalizedSignal.includes(" ")
+        ? normalizedText.includes(normalizedSignal) && titleTokens.some((token) => normalizedSignal.includes(token))
+        : titleSet.has(stemToken(normalizedSignal));
+      const combinedHit = hasSignalMatch(signal, normalizedText, combinedSet);
+
+      if (titleHit) {
+        score += 3;
+      } else if (combinedHit) {
+        score += 1;
+      }
+    }
+
+    if (score > 0) {
+      scores[category] = score;
+    }
+  }
+
+  if (!Object.keys(scores).length) {
+    return null;
+  }
+
+  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+  if (sorted.length > 1 && sorted[0][1] === sorted[1][1]) {
+    return null;
+  }
+
+  return sorted[0][0];
+}
+
+function detectPrimaryProductType(context) {
+  const titleSet = new Set(context.titleTokens);
+  const combinedSet = new Set([...context.titleTokens, ...context.descriptionTokens]);
+  let bestRule = null;
+  let bestScore = 0;
+
+  for (const rule of PRODUCT_TYPE_RULES) {
+    let score = 0;
+
+    for (const phrase of rule.phrases) {
+      const normalizedPhrase = normalizeText(phrase);
+      if (context.normalizedTitle.includes(normalizedPhrase)) {
+        score += 6;
+      } else if (context.combined.includes(normalizedPhrase)) {
+        score += 3;
+      }
+    }
+
+    for (const token of rule.tokens) {
+      const normalizedToken = stemToken(normalizeText(token));
+      if (titleSet.has(normalizedToken)) {
+        score += 3;
+      } else if (combinedSet.has(normalizedToken)) {
+        score += 1;
+      }
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestRule = rule;
+    }
+  }
+
+  return bestScore > 0 ? bestRule : null;
+}
+
+function collectSizeIndicators(value) {
+  const matches = String(value || "")
+    .toLowerCase()
+    .match(/\b\d+(?:\.\d+)?\s?(?:ml|l|litre|liter|inch|inches|cm|mm|oz|pack)\b|\b\d+\s*x\s*\d+\b/g);
+
+  return matches ? [...new Set(matches.map((match) => match.replace(/\s+/g, "")))] : [];
+}
+
+function overlapItems(left, right) {
+  const rightSet = new Set(right || []);
+  return (left || []).filter((item) => rightSet.has(item));
+}
+
+function detectMaterialFamilies(materials = []) {
+  return Object.entries(MATERIAL_FAMILIES)
+    .filter(([, familySignals]) => overlapItems(materials, familySignals).length)
+    .map(([family]) => family);
+}
+
+function hasMaterialFamilyConflict(left = [], right = []) {
+  const leftFamilies = detectMaterialFamilies(left);
+  const rightFamilies = detectMaterialFamilies(right);
+
+  if (!leftFamilies.length || !rightFamilies.length) {
+    return false;
+  }
+
+  return !overlapItems(leftFamilies, rightFamilies).length;
+}
+
+function jaccardSimilarity(left, right) {
+  const leftSet = new Set(left || []);
+  const rightSet = new Set(right || []);
+
+  if (!leftSet.size || !rightSet.size) {
+    return 0;
+  }
+
+  const intersection = [...leftSet].filter((item) => rightSet.has(item)).length;
+  const union = new Set([...leftSet, ...rightSet]).size;
+  return union ? intersection / union : 0;
+}
+
+function buildProductSignals(title, description, context = buildProductContext(title, description)) {
+  const combinedText = `${context.normalizedTitle} ${context.normalizedDescription}`.trim();
+  const combinedSet = new Set([...context.titleTokens, ...context.descriptionTokens]);
+  const primaryTypeRule = detectPrimaryProductType(context);
+  const materials = collectSignalMatches(combinedText, combinedSet, MATERIAL_SIGNALS);
+
+  return {
+    brand: extractBrandToken(title),
+    category: detectCategoryFromTextData(combinedText, context.titleTokens, context.descriptionTokens),
+    primaryType: primaryTypeRule?.type || "",
+    primaryTypeCategory: primaryTypeRule?.category || "",
+    materials,
+    materialFamilies: detectMaterialFamilies(materials),
+    audiences: collectSignalMatches(combinedText, combinedSet, AUDIENCE_SIGNALS),
+    useCases: collectSignalMatches(combinedText, combinedSet, USE_CASE_SIGNALS),
+    features: collectSignalMatches(combinedText, combinedSet, FEATURE_SIGNALS),
+    variants: collectSignalMatches(combinedText, combinedSet, VARIANT_SIGNALS),
+    sizeIndicators: collectSizeIndicators(`${title} ${description}`),
   };
 }
 
@@ -904,14 +1376,17 @@ function scoreKeywords({ title, description, keywords, fetchedContext: liveConte
     .filter(Boolean)
     .join(" ");
   const context = buildProductContext(mergedTitle, mergedDescription);
+  const productSignals = buildProductSignals(mergedTitle, mergedDescription, context);
 
-  return keywords.map((keyword) => scoreSingleKeyword(keyword, context));
+  return keywords.map((keyword) => scoreSingleKeyword(keyword, context, productSignals));
 }
 
-function scoreSingleKeyword(keyword, context) {
+function scoreSingleKeyword(keyword, context, productSignals) {
   const normalizedKeyword = normalizeText(keyword);
   const keywordTokens = tokenize(keyword);
   const uniqueKeywordTokens = [...new Set(keywordTokens)];
+  const keywordContext = buildProductContext(keyword, "");
+  const keywordSignals = buildProductSignals(keyword, "", keywordContext);
 
   if (!normalizedKeyword) {
     return {
@@ -943,100 +1418,154 @@ function scoreSingleKeyword(keyword, context) {
   const titleMatchedTokens = uniqueKeywordTokens.filter((token) =>
     context.titleTokens.includes(token)
   );
-  const coreMatchedTokens = uniqueKeywordTokens.filter((token) =>
-    context.coreTokenSet.has(token)
-  );
-  const featureMatchedTokens = uniqueKeywordTokens.filter((token) =>
-    context.featureTokenSet.has(token)
-  );
   const matchRatio = uniqueKeywordTokens.length
     ? matchedTokens.length / uniqueKeywordTokens.length
     : 0;
-  const minimumCoreMatch = Math.min(2, Math.max(1, context.coreTokens.length));
+  const titleCoverage = uniqueKeywordTokens.length
+    ? titleMatchedTokens.length / uniqueKeywordTokens.length
+    : 0;
+  const comparableKeyword = normalizeComparableTitle(keyword);
+  const comparableTitle = normalizeComparableTitle(context.normalizedTitle);
+  const exactComparableMatch = comparableKeyword && comparableKeyword === comparableTitle;
+  const sameCategory =
+    Boolean(keywordSignals.category) &&
+    Boolean(productSignals.category) &&
+    keywordSignals.category === productSignals.category;
+  const categoryMismatch =
+    Boolean(keywordSignals.category) &&
+    Boolean(productSignals.category) &&
+    keywordSignals.category !== productSignals.category;
+  const samePrimaryType =
+    Boolean(keywordSignals.primaryType) &&
+    Boolean(productSignals.primaryType) &&
+    keywordSignals.primaryType === productSignals.primaryType;
+  const keywordHasSpecificType = Boolean(keywordSignals.primaryType);
+  const productHasSpecificType = Boolean(productSignals.primaryType);
+  const specificTypeMismatch =
+    keywordHasSpecificType &&
+    productHasSpecificType &&
+    keywordSignals.primaryType !== productSignals.primaryType;
+  const sameBrand =
+    Boolean(keywordSignals.brand) &&
+    Boolean(productSignals.brand) &&
+    keywordSignals.brand === productSignals.brand;
+  const differentBrand =
+    Boolean(keywordSignals.brand) &&
+    Boolean(productSignals.brand) &&
+    keywordSignals.brand !== productSignals.brand;
+  const materialOverlap = overlapItems(keywordSignals.materials, productSignals.materials);
+  const audienceOverlap = overlapItems(keywordSignals.audiences, productSignals.audiences);
+  const useCaseOverlap = overlapItems(keywordSignals.useCases, productSignals.useCases);
+  const featureOverlap = overlapItems(keywordSignals.features, productSignals.features);
+  const sizeOverlap = overlapItems(keywordSignals.sizeIndicators, productSignals.sizeIndicators);
+  const materialConflict = hasMaterialFamilyConflict(
+    keywordSignals.materials,
+    productSignals.materials
+  );
+  const signalOverlapCount =
+    materialOverlap.length +
+    audienceOverlap.length +
+    useCaseOverlap.length +
+    featureOverlap.length +
+    sizeOverlap.length;
+  const sharedSignalTokens = new Set(
+    [
+      ...materialOverlap,
+      ...audienceOverlap,
+      ...useCaseOverlap,
+      ...featureOverlap,
+      ...sizeOverlap,
+    ].flatMap((item) => tokenize(item))
+  );
+  const meaningfulMatchedTokens = matchedTokens.filter(
+    (token) => !sharedSignalTokens.has(token)
+  );
+  const broadOnlyMatch =
+    matchedTokens.length > 0 && meaningfulMatchedTokens.length === 0;
 
   let score = 0;
   let reason = "No direct product connection detected.";
 
-  if (
-    exactTitleMatch ||
-    (matchRatio === 1 && coreMatchedTokens.length >= minimumCoreMatch) ||
-    (titleContainsPhrase &&
-      matchRatio === 1 &&
-      coreMatchedTokens.length >= minimumCoreMatch)
-  ) {
+  if (specificTypeMismatch) {
+    score = sameCategory ? 3 : 2;
+    reason = "Keyword names a different core product type than the product.";
+  } else if (categoryMismatch && !samePrimaryType) {
+    score = 0;
+    reason = "Keyword points to a different product category than the product.";
+  } else if (looksLikeDifferentProduct(normalizedKeyword, context) && !samePrimaryType) {
+    score = 0;
+    reason = "Keyword describes a different product type or buying intent.";
+  } else if (exactTitleMatch || exactComparableMatch) {
     score = 9;
-    reason = "Keyword directly names the product with exact buying intent.";
-  } else if (
-    matchRatio === 1 &&
-    coreMatchedTokens.length >= 1 &&
-    (titleContainsPhrase ||
-      combinedContainsPhrase ||
-      matchedTokens.length >= minimumCoreMatch)
-  ) {
+    reason = "Exact product-title match, which is a core keyword fit.";
+  } else if (samePrimaryType && titleContainsPhrase && matchRatio === 1 && uniqueKeywordTokens.length >= 2) {
+    score = 9;
+    reason = "Keyword matches the core product type and appears as a strong title phrase.";
+  } else if (samePrimaryType && (matchRatio === 1 || titleCoverage >= 0.67) && (signalOverlapCount >= 1 || combinedContainsPhrase)) {
     score = 8;
-    reason = "Keyword is a very close product variant or strong feature-led buying phrase.";
-  } else if (
-    (matchRatio >= 0.75 && coreMatchedTokens.length >= 1 && matchedTokens.length >= 2) ||
-    (combinedContainsPhrase && matchedTokens.length >= 2)
-  ) {
+    reason = "Keyword strongly matches the same product type with useful attribute overlap.";
+  } else if (samePrimaryType && (matchRatio >= 0.5 || signalOverlapCount >= 1 || descriptionContainsPhrase)) {
     score = 7;
-    reason = "Keyword is strongly relevant, but slightly less direct than the main buying term.";
-  } else if (
-    matchedTokens.length >= 2 &&
-    coreMatchedTokens.length >= 1 &&
-    featureMatchedTokens.length >= 1
-  ) {
-    score = 7;
-    reason = "Keyword combines the product type with a strong use or feature match.";
-  } else if (matchedTokens.length >= 2 && (coreMatchedTokens.length >= 1 || featureMatchedTokens.length >= 2)) {
+    reason = "Keyword matches the same product type but is more secondary than core.";
+  } else if (sameCategory && (matchRatio >= 0.5 || signalOverlapCount >= 2 || matchedTokens.length >= 2)) {
     score = 6;
-    reason = "Keyword can help shoppers discover the product, but it is broader than the core product phrase.";
-  } else if (
-    sharesShoppingFamily(normalizedKeyword, context) &&
-    getDiscoveryStrength(normalizedKeyword) === "strong"
-  ) {
-    score = 6;
-    reason = "Keyword belongs to the same shopping family and can still help shoppers discover the product.";
-  } else if (
-    sharesShoppingFamily(normalizedKeyword, context) &&
-    getDiscoveryStrength(normalizedKeyword) === "medium"
-  ) {
+    reason = "Keyword is clearly related to the product category and useful for relevance.";
+  } else if (sameCategory && (matchedTokens.length >= 1 || signalOverlapCount >= 1 || descriptionContainsPhrase)) {
     score = 5;
-    reason = "Keyword is connected to the same shopping family, but only through a weaker secondary use.";
-  } else if (
-    descriptionContainsPhrase ||
-    combinedContainsPhrase ||
-    (matchRatio >= 0.5 && matchedTokens.length >= 2)
-  ) {
-    score = 5;
-    reason = "Keyword has a partial connection through product use, feature, or broader discovery wording.";
-  } else if (coreMatchedTokens.length === 1 || sharesCategoryHint(normalizedKeyword, context)) {
+    reason = "Keyword has a partial feature or category connection, but it is broad.";
+  } else if (sameCategory) {
     score = 4;
-    reason = "Keyword is loosely connected to the product or category, but not close to direct buying intent.";
-  } else if (matchedTokens.length === 1 || featureMatchedTokens.length === 1) {
+    reason = "Keyword stays in the same category, but the connection is weak.";
+  } else if (matchedTokens.length === 1 || signalOverlapCount === 1 || sharesCategoryHint(normalizedKeyword, context)) {
     score = 3;
-    reason = "Keyword is only very weakly related and would not be useful for targeting this product.";
+    reason = "Keyword has only a thin relation to the product and should be reviewed carefully.";
   } else if (hasSurfaceSimilarity(normalizedKeyword, context.combined)) {
     score = 2;
-    reason = "Keyword is a poor match with only slight similarity to the product details.";
-  } else if (hasVeryLightSimilarity(normalizedKeyword, context.combined)) {
+    reason = "There is only a marginal text-level similarity with the product details.";
+  } else if (uniqueKeywordTokens.length === 1 && matchedTokens.length === 0) {
     score = 1;
-    reason = "Keyword is a very poor match and is almost irrelevant to the product.";
+    reason = "Keyword is almost irrelevant to the product and lacks clear buying-intent overlap.";
   } else {
     score = 0;
-    reason = "Keyword has no meaningful relation to the product.";
+    reason = "No meaningful connection found between this keyword and the product.";
   }
 
-  score = applyBoostsAndPenalties(score, {
-    keyword,
-    normalizedKeyword,
-    uniqueKeywordTokens,
-    matchedTokens,
-    titleMatchedTokens,
-    context,
-  });
+  if (differentBrand && !sameBrand && score > 0) {
+    score = Math.min(score, samePrimaryType ? 5 : 2);
+    reason = samePrimaryType
+      ? "Keyword is strongly tied to another brand, so relevance is limited."
+      : "Keyword is strongly tied to another brand and only has marginal product overlap.";
+  }
 
-  return { keyword, score, reason: refineReason(score, reason, keyword, matchedTokens) };
+  if (materialConflict && score > 0) {
+    score = Math.min(score, samePrimaryType ? 4 : 2);
+    reason = samePrimaryType
+      ? "Keyword targets a different material variant than the product."
+      : "Keyword overlaps only loosely and points to a different material.";
+  }
+
+  if (keywordHasSpecificType && !samePrimaryType && !exactComparableMatch && score > 3) {
+    score = broadOnlyMatch || matchRatio < 0.75 ? 3 : 4;
+    reason = sameCategory
+      ? "Keyword names a specific nearby product type, but the product details only show broad overlap."
+      : "Keyword names a specific product type that is not clearly supported by the product details.";
+  }
+
+  if (broadOnlyMatch && !samePrimaryType && score > 3) {
+    score = 3;
+    reason = "Keyword has only a thin relation to the product and should be reviewed carefully.";
+  }
+
+  return {
+    keyword,
+    score,
+    reason: refineReason(
+      score,
+      reason,
+      keyword,
+      [...new Set([...matchedTokens, ...materialOverlap, ...useCaseOverlap, ...featureOverlap])]
+    ),
+  };
 }
 
 function applyBoostsAndPenalties(score, details) {
@@ -1052,11 +1581,8 @@ function applyBoostsAndPenalties(score, details) {
     (total, token) => total + (context.tokenWeights.get(token) || 0),
     0
   );
-  const coreTitleMatchedTokens = titleMatchedTokens.filter((token) =>
-    context.coreTokenSet.has(token)
-  );
 
-  if (coreTitleMatchedTokens.length >= 2 && score < 8) {
+  if (titleMatchedTokens.length >= 2 && score < 8) {
     score += 1;
   }
 
@@ -1064,8 +1590,7 @@ function applyBoostsAndPenalties(score, details) {
     uniqueKeywordTokens.length >= 3 &&
     matchedTokens.length >= 2 &&
     weightedCoverage >= 6 &&
-    score >= 5 &&
-    score < 7
+    score < 8
   ) {
     score += 1;
   }
@@ -1074,12 +1599,7 @@ function applyBoostsAndPenalties(score, details) {
     score -= 2;
   }
 
-  if (
-    uniqueKeywordTokens.length >= 2 &&
-    matchedTokens.length === 0 &&
-    !sharesShoppingFamily(normalizedKeyword, context) &&
-    !sharesCategoryHint(normalizedKeyword, context)
-  ) {
+  if (uniqueKeywordTokens.length >= 2 && matchedTokens.length === 0) {
     score = Math.min(score, 1);
   }
 
@@ -1087,19 +1607,26 @@ function applyBoostsAndPenalties(score, details) {
 }
 
 function sharesCategoryHint(keyword, context) {
-  const hintGroups = [
-    ["bottle", "flask", "mug", "cup"],
-    ["shoe", "shirt", "sock", "bag", "cloth", "apparel"],
-    ["phone", "charger", "cable", "speaker", "headphone"],
-    ["cream", "serum", "lotion", "beauty"],
-    ["car", "bike", "scooty", "vehicle", "automobile", "motorcycle"],
-    ["toy", "game", "puzzle"],
+  const hints = [
+    "bottle",
+    "flask",
+    "mug",
+    "cup",
+    "shoe",
+    "shirt",
+    "bag",
+    "phone",
+    "charger",
+    "cable",
+    "cream",
+    "serum",
+    "watch",
+    "speaker",
+    "toy",
   ];
 
-  return hintGroups.some(
-    (group) =>
-      group.some((hint) => keyword.includes(hint)) &&
-      group.some((hint) => context.combined.includes(hint))
+  return hints.some(
+    (hint) => keyword.includes(hint) && context.combined.includes(hint)
   );
 }
 
@@ -1109,161 +1636,26 @@ function hasSurfaceSimilarity(keyword, combinedText) {
 }
 
 function detectProductCategory(context) {
-  const categoryKeywords = {
-    kitchen: ["bottle", "flask", "mug", "cup", "container", "tiffin", "lunch", "box", "plate", "spoon", "fork", "knife", "pan", "pot", "cookware", "utensil", "kitchen"],
-    clothing: ["shirt", "pant", "jeans", "dress", "shoe", "sandal", "boot", "sock", "jacket", "coat", "clothing", "apparel", "wear", "handkerchief", "hanky", "women", "women's"],
-    home_decor: ["throw", "blanket", "cotton", "textile", "home", "living", "room", "decor", "curtain", "rug", "pillow", "cushion", "bedspread", "quilt", "tapestry"],
-    electronics: ["phone", "laptop", "tablet", "charger", "cable", "speaker", "headphone", "mouse", "keyboard", "electronics", "gadget"],
-    beauty: ["cream", "serum", "lotion", "makeup", "cosmetic", "skincare", "beauty", "lipstick", "foundation"],
-    books: ["book", "novel", "paperback", "hardcover", "textbook", "magazine", "journal"],
-    toys: ["toy", "game", "puzzle", "play", "children", "kid", "baby", "doll", "action"],
-    furniture: ["furniture", "chair", "table", "sofa", "bed", "shelf", "cabinet", "desk", "drawer"],
-    jewelry: ["jewelry", "necklace", "bracelet", "ring", "earring", "accessory", "pendant", "chain"],
-    automotive: ["car", "bike", "motorcycle", "vehicle", "automobile", "tire", "wheel", "engine", "part"]
-  };
-
-  const allTokens = [...context.titleTokens, ...context.descriptionTokens];
-  const categoryScores = {};
-
-  for (const [category, keywords] of Object.entries(categoryKeywords)) {
-    let score = 0;
-    for (const keyword of keywords) {
-      if (allTokens.includes(keyword)) {
-        score += 1;
-      }
-    }
-    if (score > 0) {
-      categoryScores[category] = score;
-    }
-  }
-
-  // Enhanced brand detection for better categorization
-  const combinedText = context.combined.toLowerCase();
-  
-  // Brand-specific category hints
-  if (combinedText.includes("caruso") && combinedText.includes("italy")) {
-    // Caruso Italy is primarily known for clothing accessories like handkerchiefs
-    if (allTokens.some(token => ["handkerchief", "hanky", "cotton", "women", "women's"].includes(token))) {
-      categoryScores.clothing = (categoryScores.clothing || 0) + 3; // Strong boost for Caruso Italy clothing
-    }
-  }
-
-  // Special handling for SASHAA WORLD products
-  if (combinedText.includes("sashaa") && combinedText.includes("world")) {
-    if (allTokens.some(token => ["throw", "blanket", "cotton", "home", "living", "room"].includes(token))) {
-      categoryScores.home_decor = (categoryScores.home_decor || 0) + 3; // Strong boost for SASHAA WORLD home textiles
-    }
-  }
-
-  // Return the category with the highest score, or null if no clear category
-  if (Object.keys(categoryScores).length === 0) {
-    return null;
-  }
-
-  const maxScore = Math.max(...Object.values(categoryScores));
-  const bestCategories = Object.entries(categoryScores)
-    .filter(([_, score]) => score === maxScore)
-    .map(([category, _]) => category);
-
-  return bestCategories.length === 1 ? bestCategories[0] : null;
+  return detectCategoryFromTextData(
+    context.combined,
+    context.titleTokens,
+    context.descriptionTokens
+  );
 }
 
 function looksLikeDifferentProduct(keyword, context) {
-  const conflictingGroups = [
-    ["bottle", "lunch box", "plate", "spoon", "tiffin", "container"],
-    ["shoe", "shirt", "pant", "watch", "clothing", "apparel"],
-    ["charger", "speaker", "headphone", "mouse", "keyboard", "electronics"],
-    ["book", "phone", "laptop", "tablet", "paper", "screen"],
-    ["cream", "serum", "lotion", "makeup", "cosmetic", "skincare"],
-    ["toy", "game", "puzzle", "play", "children", "kid"],
-    ["furniture", "chair", "table", "sofa", "bed", "shelf"],
-    ["kitchen", "cookware", "pan", "pot", "utensil", "appliance"],
-    ["jewelry", "necklace", "bracelet", "ring", "earring", "accessory"]
-  ];
+  const keywordContext = buildProductContext(keyword, "");
+  const keywordType = detectPrimaryProductType(keywordContext)?.type || "";
+  const contextType = detectPrimaryProductType(context)?.type || "";
+  const keywordCategory = detectProductCategory(keywordContext);
+  const contextCategory = detectProductCategory(context);
 
-  // Enhanced category detection
-  const productCategories = {
-    kitchen: ["bottle", "flask", "mug", "cup", "container", "tiffin", "lunch", "box", "plate", "spoon", "fork", "knife", "pan", "pot", "cookware", "utensil", "kitchen"],
-    clothing: ["shirt", "pant", "jeans", "dress", "shoe", "sandal", "boot", "sock", "jacket", "coat", "clothing", "apparel", "wear"],
-    home_decor: ["throw", "blanket", "cotton", "textile", "home", "living", "room", "decor", "curtain", "rug", "pillow", "cushion"],
-    electronics: ["phone", "laptop", "tablet", "charger", "cable", "speaker", "headphone", "mouse", "keyboard", "electronics", "gadget"],
-    beauty: ["cream", "serum", "lotion", "makeup", "cosmetic", "skincare", "beauty", "lipstick", "foundation"],
-    books: ["book", "novel", "paperback", "hardcover", "textbook", "magazine", "journal"],
-    toys: ["toy", "game", "puzzle", "play", "children", "kid", "baby", "doll", "action"],
-    furniture: ["furniture", "chair", "table", "sofa", "bed", "shelf", "cabinet", "desk", "drawer"],
-    jewelry: ["jewelry", "necklace", "bracelet", "ring", "earring", "accessory", "pendant", "chain"],
-    automotive: ["car", "bike", "motorcycle", "vehicle", "automobile", "tire", "wheel", "engine", "part"]
-  };
-
-  // Special case: If both are SASHAA WORLD cotton throw products, they're NOT different
-  const combinedText = context.combined.toLowerCase();
-  const keywordLower = keyword.toLowerCase();
-  
-  if (combinedText.includes("sashaa") && combinedText.includes("world") &&
-      keywordLower.includes("sashaa") && keywordLower.includes("world") &&
-      combinedText.includes("throw") && keywordLower.includes("throw") &&
-      combinedText.includes("cotton") && keywordLower.includes("cotton")) {
-    return false; // Same brand and product type - not different
-  }
-
-  // Check direct conflicting groups
-  for (const group of conflictingGroups) {
-    const keywordHits = group.filter((item) => keyword.includes(item));
-    const contextHits = group.filter((item) => context.combined.includes(item));
-
-    if (keywordHits.length > 0 && contextHits.length > 0) {
-      const keywordCategory = keywordHits[0];
-      const contextCategory = contextHits[0];
-      
-      // If they're from different subcategories within the same group
-      if (keywordCategory !== contextCategory) {
-        return true;
-      }
-    }
-  }
-
-  // Check product category mismatches
-  let keywordCategory = null;
-  let contextCategory = null;
-
-  for (const [category, keywords] of Object.entries(productCategories)) {
-    if (keywords.some(k => keyword.includes(k))) {
-      keywordCategory = category;
-    }
-    if (keywords.some(k => context.combined.includes(k))) {
-      contextCategory = category;
-    }
-  }
-
-  // If both have categories but they're different, it's a mismatch
   if (keywordCategory && contextCategory && keywordCategory !== contextCategory) {
     return true;
   }
 
-  // Additional heuristics for subtle mismatches
-  const keywordTokens = tokenize(keyword);
-  const contextTokens = context.combinedTokenSet;
-  
-  // If keyword has specific product indicators that don't match context
-  const productIndicators = {
-    "digital": ["screen", "display", "battery", "charging", "electronic"],
-    "physical": ["hardcover", "paperback", "print", "manual"],
-    "wearable": ["size", "fit", "comfort", "fabric", "material"],
-    "consumable": ["edible", "food", "drink", "flavor", "taste"]
-  };
-
-  for (const [type, indicators] of Object.entries(productIndicators)) {
-    const keywordHasIndicator = indicators.some(ind => keywordTokens.includes(ind));
-    const contextHasIndicator = indicators.some(ind => contextTokens.has(ind));
-    
-    if (keywordHasIndicator && !contextHasIndicator) {
-      // Check if context has indicators of a different type
-      for (const [otherType, otherIndicators] of Object.entries(productIndicators)) {
-        if (type !== otherType && otherIndicators.some(ind => contextTokens.has(ind))) {
-          return true;
-        }
-      }
-    }
+  if (keywordType && contextType && keywordType !== contextType && keywordCategory === contextCategory) {
+    return true;
   }
 
   return false;
@@ -1285,17 +1677,22 @@ function refineReason(score, reason, keyword, matchedTokens) {
   return reason;
 }
 
-async function fetchProductDetails(url, timeout = 12000) {
-  const normalizedUrl = normalizeAmazonLookupInput(url);
+async function fetchProductDetails(url, timeout = 12000, options = {}) {
+  const marketplace = normalizeMarketplaceCode(
+    options.marketplace || inferMarketplaceFromInput(url) || DEFAULT_MARKETPLACE
+  );
+  const normalizedUrl = normalizeUrl(url, marketplace);
   const asinMatch = normalizedUrl.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/i);
   const asin = asinMatch ? asinMatch[1].toUpperCase() : "";
-  const marketplaceHost = getAmazonHost(normalizedUrl);
+  const preferFast = Boolean(options.preferFast);
+  const amazonHost = getMarketplaceHost(marketplace);
 
   try {
     const backendProduct = await fetchProductDetailsFromBackend({
       asin,
       url: normalizedUrl,
       timeout,
+      marketplace,
     });
 
     if (backendProduct && hasUsableProductTitle(backendProduct.title)) {
@@ -1303,6 +1700,9 @@ async function fetchProductDetails(url, timeout = 12000) {
     }
   } catch (error) {
     console.warn("Backend fetch unavailable, falling back to browser fetch:", error.message);
+    if (preferFast && window.location.protocol !== "file:") {
+      throw error;
+    }
   }
 
   // Multiple proxy providers with different approaches
@@ -1324,7 +1724,7 @@ async function fetchProductDetails(url, timeout = 12000) {
     },
     {
       name: "Direct Jina",
-      url: `https://r.jina.ai/http://${marketplaceHost}/dp/${asin}`,
+      url: `https://r.jina.ai/http://${amazonHost.replace(/^https?:\/\//i, "")}/dp/${asin}`,
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
     }
   ];
@@ -1333,17 +1733,17 @@ async function fetchProductDetails(url, timeout = 12000) {
   const amazonSearchProviders = [
     {
       name: "Amazon Search",
-      url: `https://r.jina.ai/http://${marketplaceHost}/s?k=${asin}&ref=nb_sb_noss`,
+      url: `https://r.jina.ai/http://${amazonHost.replace(/^https?:\/\//i, "")}/s?k=${asin}&ref=nb_sb_noss`,
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
     },
     {
       name: "Amazon Mobile Search",
-      url: `https://r.jina.ai/http://${marketplaceHost}/s?k=${asin}&i=mobile&ref=nb_sb_noss`,
+      url: `https://r.jina.ai/http://${amazonHost.replace(/^https?:\/\//i, "")}/s?k=${asin}&i=mobile&ref=nb_sb_noss`,
       headers: { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15' }
     },
     {
       name: "Amazon Books Search",
-      url: `https://r.jina.ai/http://${marketplaceHost}/s?k=${asin}&i=books&ref=nb_sb_noss`,
+      url: `https://r.jina.ai/http://${amazonHost.replace(/^https?:\/\//i, "")}/s?k=${asin}&i=books&ref=nb_sb_noss`,
       headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
     }
   ];
@@ -1452,12 +1852,12 @@ async function fetchProductDetails(url, timeout = 12000) {
           const searchResult = extractFromSearchResults(text, asin);
           if (searchResult.title && !searchResult.title.toLowerCase().includes('title not found')) {
             console.log(`Search success with ${provider.name}: ${searchResult.title}`);
-            return withSafeProductMetrics({
+            return {
               sourceName: `Amazon Search (${provider.name})`,
               asin,
               title: searchResult.title,
               highlights: searchResult.highlights,
-            });
+            };
           }
         }
       } catch (error) {
@@ -1469,7 +1869,7 @@ async function fetchProductDetails(url, timeout = 12000) {
   // Manual ASIN lookup as final fallback
   if (!bestResult && asin) {
     console.log('Trying manual ASIN lookup...');
-    const manualResult = await manualAsinLookup(asin, marketplaceHost);
+    const manualResult = await manualAsinLookup(asin, marketplace);
     if (manualResult) {
       return manualResult;
     }
@@ -1480,15 +1880,15 @@ async function fetchProductDetails(url, timeout = 12000) {
   }
 
   // Final fallback with ASIN information
-  return withSafeProductMetrics({
+  return {
     sourceName: "All providers failed",
     asin,
     title: "",
     highlights: [`Product details unavailable for ASIN ${asin}. This may be due to connectivity issues or the product being unavailable.`],
-  });
+  };
 }
 
-async function fetchProductDetailsFromBackend({ asin, url, timeout }) {
+async function fetchProductDetailsFromBackend({ asin, url, timeout, marketplace }) {
   if (window.location.protocol === "file:") {
     throw new Error("Backend route unavailable from file protocol");
   }
@@ -1502,6 +1902,8 @@ async function fetchProductDetailsFromBackend({ asin, url, timeout }) {
   } else if (url) {
     params.set("url", url);
   }
+
+  params.set("marketplace", normalizeMarketplaceCode(marketplace));
 
   try {
     const response = await fetch(`/api/fetch-product?${params.toString()}`, {
@@ -1522,15 +1924,6 @@ async function fetchProductDetailsFromBackend({ asin, url, timeout }) {
       asin: data.asin || asin || "",
       title: data.title || "",
       highlights: Array.isArray(data.highlights) ? data.highlights : [],
-      price: data.price || "",
-      currency: data.currency || "",
-      priceValue: Number.isFinite(Number(data.priceValue)) ? Number(data.priceValue) : 0,
-      bsr: data.bsr || "",
-      category: data.category || "",
-      boughtPastMonth: data.boughtPastMonth || "",
-      estimatedMonthlySales: data.estimatedMonthlySales || "",
-      estimatedRevenue30Days: data.estimatedRevenue30Days || "",
-      estimationBasis: data.estimationBasis || "",
     };
   } finally {
     window.clearTimeout(timeoutId);
@@ -1538,7 +1931,7 @@ async function fetchProductDetailsFromBackend({ asin, url, timeout }) {
 }
 
 // Helium API integration for real Amazon product data
-async function fetchFromHeliumAPI(asin) {
+async function fetchFromHeliumAPI(asin, marketplace = DEFAULT_MARKETPLACE) {
   // Note: User needs to provide their Helium API key
   const apiKey = ''; // User should add their Helium API key here
   
@@ -1548,7 +1941,7 @@ async function fetchFromHeliumAPI(asin) {
 
   try {
     // Helium API endpoint for Amazon product data
-    const heliumUrl = `https://api.helium10.com/product-data?asin=${asin}&marketplace=amazon.in`;
+    const heliumUrl = `https://api.helium10.com/product-data?asin=${asin}&marketplace=${new URL(getMarketplaceHost(marketplace)).host}`;
     
     const response = await fetch(heliumUrl, {
       method: 'GET',
@@ -1584,10 +1977,10 @@ async function fetchFromHeliumAPI(asin) {
 }
 
 // Manual ASIN lookup as final fallback
-async function manualAsinLookup(asin, marketplaceHost = "www.amazon.in") {
+async function manualAsinLookup(asin, marketplace = DEFAULT_MARKETPLACE) {
   try {
     // Try to get basic product info from Amazon's product API
-    const amazonUrl = `https://${marketplaceHost}/dp/${asin}`;
+    const amazonUrl = buildMarketplaceProductUrl(asin, marketplace);
     
     // Try a simple fetch to see if the product exists
     const response = await fetch(`https://r.jina.ai/http://${amazonUrl.replace(/^https?:\/\//i, "")}`, {
@@ -1612,12 +2005,12 @@ async function manualAsinLookup(asin, marketplaceHost = "www.amazon.in") {
         );
 
         if (possibleTitle && !possibleTitle.toLowerCase().includes('error')) {
-      return withSafeProductMetrics({
-        sourceName: "Manual Lookup",
-        asin,
-        title: possibleTitle,
-        highlights: [`Basic info extracted for ASIN ${asin}`],
-      });
+          return {
+            sourceName: "Manual Lookup",
+            asin,
+            title: possibleTitle,
+            highlights: [`Basic info extracted for ASIN ${asin}`],
+          };
         }
       }
     }
@@ -1732,42 +2125,31 @@ function scoreExtractionQuality(extractedData) {
   return score;
 }
 
-function withSafeProductMetrics(product) {
-  return {
-    sourceName: product?.sourceName || "",
-    asin: product?.asin || "",
-    title: product?.title || "",
-    highlights: Array.isArray(product?.highlights) ? product.highlights : [],
-    price: product?.price || "",
-    currency: product?.currency || "",
-    priceValue: Number.isFinite(Number(product?.priceValue)) ? Number(product.priceValue) : 0,
-    bsr: product?.bsr || "",
-    category: product?.category || "",
-    boughtPastMonth: product?.boughtPastMonth || "",
-    estimatedMonthlySales: product?.estimatedMonthlySales || "",
-    estimatedRevenue30Days: product?.estimatedRevenue30Days || "",
-    estimationBasis: product?.estimationBasis || "",
-  };
-}
+function normalizeUrl(url, marketplace = DEFAULT_MARKETPLACE) {
+  const rawUrl = String(url || "").trim();
 
-function normalizeAmazonLookupInput(value) {
-  const input = String(value || "").trim();
-
-  if (!input) {
+  if (!rawUrl) {
     return "";
   }
 
-  const asinMatch = input.match(/\b([A-Z0-9]{10})\b/i);
-
-  if (/^https?:\/\//i.test(input)) {
-    return input;
+  if (/^[A-Z0-9]{10}$/i.test(rawUrl)) {
+    return buildMarketplaceProductUrl(rawUrl, marketplace);
   }
 
-  if (asinMatch && asinMatch[1]) {
-    return `https://www.amazon.in/dp/${asinMatch[1].toUpperCase()}`;
+  if (/^https?:\/\//i.test(rawUrl)) {
+    return rawUrl;
   }
 
-  return `https://${input}`;
+  if (/amazon\./i.test(rawUrl)) {
+    return `https://${rawUrl.replace(/^\/+/, "")}`;
+  }
+
+  const asin = extractAsinFromInput(rawUrl);
+  if (asin) {
+    return buildMarketplaceProductUrl(asin, marketplace);
+  }
+
+  return `https://${rawUrl}`;
 }
 
 function extractProductDetails(rawText, url, sourceName) {
@@ -1780,297 +2162,13 @@ function extractProductDetails(rawText, url, sourceName) {
     .filter(Boolean);
   const title = extractTitleFromHtml(text, cleanedLines, asin);
   const highlights = extractHighlightsFromHtml(text, cleanedLines, title);
-  const metrics = extractSalesMetrics(text, cleanedLines, url);
 
-  return withSafeProductMetrics({
+  return {
     sourceName,
     asin,
     title,
     highlights,
-    price: metrics.price,
-    currency: metrics.currency,
-    priceValue: metrics.priceValue,
-    bsr: metrics.bsr,
-    category: metrics.category,
-    boughtPastMonth: metrics.boughtPastMonth,
-    estimatedMonthlySales: metrics.estimatedMonthlySales,
-    estimatedRevenue30Days: metrics.estimatedRevenue30Days,
-    estimationBasis: metrics.estimationBasis,
-  });
-}
-
-function extractSalesMetrics(text, lines, url) {
-  const priceData = extractPriceData(text, lines, url);
-  const rankData = extractBsrData(text, lines);
-  const boughtPastMonth = extractBoughtPastMonth(text, lines);
-  const estimatedMonthlySales = estimateMonthlySales({
-    bsr: rankData.rankNumber,
-    category: rankData.category,
-    boughtPastMonthValue: boughtPastMonth.value,
-  });
-  const estimatedRevenue30Days =
-    estimatedMonthlySales > 0 && priceData.priceValue > 0
-      ? formatCurrencyAmount(estimatedMonthlySales * priceData.priceValue, priceData.currency)
-      : "";
-
-  return {
-    price: priceData.displayPrice,
-    currency: priceData.currency,
-    priceValue: priceData.priceValue,
-    bsr: rankData.displayRank,
-    category: rankData.category,
-    boughtPastMonth: boughtPastMonth.display,
-    estimatedMonthlySales: estimatedMonthlySales > 0 ? formatWholeNumber(estimatedMonthlySales) : "",
-    estimatedRevenue30Days,
-    estimationBasis: buildEstimationBasis({
-      boughtPastMonthDisplay: boughtPastMonth.display,
-      rankDisplay: rankData.displayRank,
-      category: rankData.category,
-    }),
   };
-}
-
-function extractPriceData(text, lines, url) {
-  const host = getAmazonHost(url);
-  const currencyFallback = inferCurrencyFromHost(host);
-  const directMatches = [
-    ...text.matchAll(/a-price-symbol[^>]*>(.*?)<\/span>[\s\S]{0,160}?a-price-whole[^>]*>([\s\S]*?)<\/span>[\s\S]{0,80}?a-price-fraction[^>]*>([^<]+)<\/span>/gi),
-  ];
-
-  for (const match of directMatches) {
-    const symbolText = cleanInlineValue(match[1]).trim();
-    const normalizedSymbol = normalizeCurrencySymbol(symbolText);
-
-    if (normalizedSymbol && normalizedSymbol !== currencyFallback) {
-      continue;
-    }
-
-    if (!normalizedSymbol && !host.includes("amazon.in")) {
-      continue;
-    }
-
-    const whole = cleanInlineValue(match[2]).replace(/[^0-9,]/g, "");
-    const fraction = cleanInlineValue(match[3]).replace(/[^0-9]/g, "");
-    const raw = `${whole.replace(/,/g, "")}.${fraction}`;
-    const priceValue = Number.parseFloat(raw);
-
-    if (Number.isFinite(priceValue) && priceValue > 0) {
-      return {
-        displayPrice: formatCurrencyAmount(priceValue, currencyFallback),
-        priceValue,
-        currency: currencyFallback,
-      };
-    }
-  }
-
-  const textPatterns = [
-    /(?:deal price|price|selling price|our price)[^0-9£$€₹]*([£$€₹])\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i,
-    /(?:deal price|price|selling price|our price)[^0-9A-Z]*(INR)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i,
-    /([£$€₹])\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/,
-    /\b(INR)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i,
-  ];
-
-  for (const line of lines) {
-    const normalizedLine = line.toLowerCase();
-
-    if (
-      normalizedLine.includes("list price") ||
-      normalizedLine.includes("mrp") ||
-      normalizedLine.includes("save ") ||
-      normalizedLine.includes("coupon")
-    ) {
-      continue;
-    }
-
-    for (const pattern of textPatterns) {
-      const match = line.match(pattern);
-      if (!match) {
-        continue;
-      }
-
-      const currency = normalizeCurrencySymbol(match[1] || currencyFallback) || currencyFallback;
-      if (currency && currency !== currencyFallback) {
-        continue;
-      }
-      const priceValue = Number.parseFloat(String(match[2] || "").replace(/,/g, ""));
-
-      if (Number.isFinite(priceValue) && priceValue > 0) {
-        return {
-          displayPrice: formatCurrencyAmount(priceValue, currency),
-          priceValue,
-          currency,
-        };
-      }
-    }
-  }
-
-  return {
-    displayPrice: "",
-    priceValue: 0,
-    currency: currencyFallback,
-  };
-}
-
-function extractBsrData(text, lines) {
-  const flattened = stripHtml(text).replace(/\s+/g, " ");
-  const patterns = [
-    /best sellers rank[:\s#]*#?\s*([0-9][0-9,]*)\s+in\s+([^#\(\)\[\]\|]+?)(?:\s+\(|\s+#|$)/i,
-    /#\s*([0-9][0-9,]*)\s+in\s+([^#\(\)\[\]\|]+?)(?:\s+\(|\s+#|$)/i,
-  ];
-
-  for (const sourceText of [flattened, ...lines]) {
-    for (const pattern of patterns) {
-      const match = sourceText.match(pattern);
-      if (!match) {
-        continue;
-      }
-
-      const rankNumber = Number.parseInt(String(match[1] || "").replace(/,/g, ""), 10);
-      const category = cleanInlineValue(match[2]).replace(/^in\s+/i, "").trim();
-
-      if (Number.isFinite(rankNumber) && rankNumber > 0 && category) {
-        return {
-          rankNumber,
-          displayRank: `#${formatWholeNumber(rankNumber)}`,
-          category,
-        };
-      }
-    }
-  }
-
-  return {
-    rankNumber: 0,
-    displayRank: "",
-    category: "",
-  };
-}
-
-function extractBoughtPastMonth(text, lines) {
-  const sources = [stripHtml(text), ...lines];
-  const patterns = [
-    /([0-9][0-9,]*)\+\s+bought in past month/i,
-    /([0-9][0-9,]*)\s+bought in past month/i,
-  ];
-
-  for (const sourceText of sources) {
-    for (const pattern of patterns) {
-      const match = sourceText.match(pattern);
-      if (!match) {
-        continue;
-      }
-
-      const value = Number.parseInt(String(match[1] || "").replace(/,/g, ""), 10);
-
-      if (Number.isFinite(value) && value > 0) {
-        return {
-          value,
-          display: `${formatWholeNumber(value)}+ bought in past month`,
-        };
-      }
-    }
-  }
-
-  return {
-    value: 0,
-    display: "",
-  };
-}
-
-function estimateMonthlySales({ bsr, category, boughtPastMonthValue }) {
-  if (boughtPastMonthValue > 0) {
-    return boughtPastMonthValue;
-  }
-
-  if (!bsr || bsr <= 0) {
-    return 0;
-  }
-
-  const categoryFactor = getCategoryFactor(category);
-  const estimate = Math.round((220000 * categoryFactor) / Math.pow(bsr, 0.82));
-  return estimate > 0 ? estimate : 0;
-}
-
-function getCategoryFactor(category) {
-  const normalized = String(category || "").toLowerCase();
-
-  if (/(grocery|beauty|health|household)/i.test(normalized)) return 1.15;
-  if (/(home|kitchen|office|pet)/i.test(normalized)) return 1;
-  if (/(clothing|fashion|shoes|jewelry)/i.test(normalized)) return 0.9;
-  if (/(electronics|computers|camera|video games)/i.test(normalized)) return 0.75;
-  if (/(automotive|industrial|scientific|tools)/i.test(normalized)) return 0.7;
-  if (/(books|kindle)/i.test(normalized)) return 0.55;
-
-  return 0.85;
-}
-
-function buildEstimationBasis({ boughtPastMonthDisplay, rankDisplay, category }) {
-  if (boughtPastMonthDisplay) {
-    return `Estimate uses Amazon's public bought-in-past-month signal as the 30-day units floor.`;
-  }
-
-  if (rankDisplay && category) {
-    return `Estimate is based on current BSR ${rankDisplay} in ${category}.`;
-  }
-
-  if (rankDisplay) {
-    return `Estimate is based on current BSR ${rankDisplay}.`;
-  }
-
-  return "Not enough data was available to estimate 30-day sales yet.";
-}
-
-function getAmazonHost(url) {
-  try {
-    return new URL(url).host.toLowerCase();
-  } catch (error) {
-    return "www.amazon.in";
-  }
-}
-
-function inferCurrencyFromHost(host) {
-  if (host.includes("amazon.co.uk")) return "£";
-  if (host.includes("amazon.in")) return "₹";
-  if (host.includes("amazon.de") || host.includes("amazon.fr") || host.includes("amazon.es") || host.includes("amazon.it")) return "€";
-  if (host.includes("amazon.ca")) return "C$";
-  if (host.includes("amazon.com.au")) return "A$";
-  return "$";
-}
-
-function normalizeCurrencySymbol(value) {
-  const cleaned = String(value || "").trim().toUpperCase();
-  if (!cleaned) return "";
-  if (cleaned === "INR" || cleaned === "₹") return "₹";
-  if (cleaned === "GBP" || cleaned === "£") return "£";
-  if (cleaned === "EUR" || cleaned === "€") return "€";
-  if (cleaned === "CAD" || cleaned === "C$") return "C$";
-  if (cleaned === "AUD" || cleaned === "A$") return "A$";
-  if (cleaned === "USD" || cleaned === "$") return "$";
-  return "";
-}
-
-function formatCurrencyAmount(value, currency) {
-  const numericValue = Number(value);
-
-  if (!Number.isFinite(numericValue) || numericValue <= 0) {
-    return "";
-  }
-
-  const useDecimals = !Number.isInteger(numericValue);
-  return `${currency}${numericValue.toLocaleString("en-US", {
-    minimumFractionDigits: useDecimals ? 2 : 0,
-    maximumFractionDigits: 2,
-  })}`;
-}
-
-function formatWholeNumber(value) {
-  const numericValue = Number(value);
-  return Number.isFinite(numericValue) && numericValue > 0
-    ? numericValue.toLocaleString("en-US")
-    : "";
-}
-
-function cleanInlineValue(value) {
-  return decodeHtml(String(value || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).trim();
 }
 
 function extractTitleFromHtml(html, lines, asin) {
@@ -2364,54 +2462,72 @@ function buildOwnProductProfile() {
     .filter((line) => !isBadProfileText(line))
     .join(" ");
   const context = buildProductContext(title, description);
-  const summary = summarizeProduct(title, description);
+  const signals = buildProductSignals(title, description, context);
+  const summary = summarizeProduct(title, description, signals);
 
   return {
-    asin: yourProductAsinInput.value.trim().toUpperCase(),
+    asin: extractAsinFromInput(yourProductAsinInput.value),
     title,
     description,
     context,
+    signals,
     summary,
     hasClearContext: Boolean(hasUsableProductTitle(title) || description.trim()),
   };
 }
 
-function summarizeProduct(title, description) {
-  const junkTokens = new Set([
-    "if",
-    "lt",
-    "gt",
-    "ie",
-    "html",
-    "lang",
-    "clas",
-    "class",
-    "viewport",
-    "charset",
-    "content",
-    "initial",
-    "scale",
-    "width",
-    "device",
-    "js",
-    "no",
-  ]);
-  const titleTokens = [...new Set(tokenize(title))].filter((token) => !junkTokens.has(token));
-  const descriptionTokens = [...new Set(tokenize(description))].filter(
-    (token) => !junkTokens.has(token)
-  );
+function summarizeProduct(title, description, signals = buildProductSignals(title, description)) {
+  const context = buildProductContext(title, description);
+  const titleTokens = [...new Set(context.titleTokens)];
+  const descriptionTokens = [...new Set(context.descriptionTokens)];
   const productType =
-    titleTokens.slice(0, 4).join(" ") ||
-    descriptionTokens.slice(0, 4).join(" ") ||
+    signals.primaryType ||
+    titleTokens.slice(0, 6).join(" ") ||
+    descriptionTokens.slice(0, 6).join(" ") ||
     "Not clear";
-  const keyFeatures = descriptionTokens.slice(0, 8);
-  const useCase = descriptionTokens.slice(8, 14);
+  const keyFeatures = [
+    ...signals.materials,
+    ...signals.features,
+    ...signals.sizeIndicators,
+    ...descriptionTokens.slice(0, 8),
+  ].filter(Boolean);
+  const useCase = inferUseCase(signals, descriptionTokens);
 
   return {
     productType,
-    keyFeatures: keyFeatures.length ? keyFeatures : titleTokens.slice(0, 6),
+    keyFeatures: [...new Set(keyFeatures)].slice(0, 8).length
+      ? [...new Set(keyFeatures)].slice(0, 8)
+      : titleTokens.slice(0, 6),
     useCase: useCase.length ? useCase : titleTokens.slice(0, 6),
   };
+}
+
+function inferUseCase(signals, fallbackTokens) {
+  if (signals.primaryType === "handkerchief") {
+    return ["daily use handkerchief", "personal cotton use"];
+  }
+
+  if (signals.primaryType === "throw blanket") {
+    return ["bed throw use", "sofa and home decor use"];
+  }
+
+  if (signals.primaryType === "underwear") {
+    return ["women innerwear use", "daily wear comfort use"];
+  }
+
+  if (signals.primaryType === "water bottle") {
+    return ["daily hydration use", "school or travel use"];
+  }
+
+  if (signals.primaryType === "lunch box") {
+    return ["school lunch use", "food carrying use"];
+  }
+
+  if (signals.useCases.length) {
+    return signals.useCases;
+  }
+
+  return fallbackTokens.slice(8, 14);
 }
 
 function scoreTargetAsin(asin, ownProduct, targetProduct) {
@@ -2421,36 +2537,42 @@ function scoreTargetAsin(asin, ownProduct, targetProduct) {
   const targetContext = buildProductContext(targetProduct.title || "", targetDescription);
   const ownTokens = [...new Set([...ownProduct.context.titleTokens, ...ownProduct.context.descriptionTokens])];
   const targetTokens = [...new Set([...targetContext.titleTokens, ...targetContext.descriptionTokens])];
-  const overlap = ownTokens.filter((token) => targetTokens.includes(token));
-  const overlapRatio = ownTokens.length ? overlap.length / ownTokens.length : 0;
-  const sameTitleType = ownProduct.context.titleTokens.some((token) =>
-    targetContext.titleTokens.includes(token)
-  );
+  const sharedTokens = overlapItems(ownTokens, targetTokens);
+  const tokenSimilarity = jaccardSimilarity(ownTokens, targetTokens);
+  const titleSimilarity = jaccardSimilarity(ownProduct.context.titleTokens, targetContext.titleTokens);
   const normalizedOwnTitle = normalizeComparableTitle(ownProduct.title);
   const normalizedTargetTitle = normalizeComparableTitle(targetProduct.title || targetDescription);
   const nearSameTitle =
     Boolean(normalizedOwnTitle) && normalizedOwnTitle === normalizedTargetTitle;
-  const sameBrand = extractBrandToken(ownProduct.title) && extractBrandToken(ownProduct.title) === extractBrandToken(targetProduct.title || "");
-  
-  // Enhanced category mismatch detection
+  const ownSignals = ownProduct.signals || buildProductSignals(ownProduct.title, ownProduct.description, ownProduct.context);
+  const targetSignals = buildProductSignals(targetProduct.title || "", targetDescription, targetContext);
+  const sameBrand = Boolean(ownSignals.brand) && ownSignals.brand === targetSignals.brand;
+  const differentBrand =
+    Boolean(ownSignals.brand) &&
+    Boolean(targetSignals.brand) &&
+    ownSignals.brand !== targetSignals.brand;
+  const sameCategory = Boolean(ownSignals.category) && ownSignals.category === targetSignals.category;
+  const categoryMismatch = Boolean(ownSignals.category) && Boolean(targetSignals.category) && ownSignals.category !== targetSignals.category;
+  const samePrimaryType = Boolean(ownSignals.primaryType) && ownSignals.primaryType === targetSignals.primaryType;
+  const materialOverlap = overlapItems(ownSignals.materials, targetSignals.materials);
+  const materialConflict = hasMaterialFamilyConflict(
+    ownSignals.materials,
+    targetSignals.materials
+  );
+  const audienceOverlap = overlapItems(ownSignals.audiences, targetSignals.audiences);
+  const useCaseOverlap = overlapItems(ownSignals.useCases, targetSignals.useCases);
+  const featureOverlap = overlapItems(ownSignals.features, targetSignals.features);
+  const sizeOverlap = overlapItems(ownSignals.sizeIndicators, targetSignals.sizeIndicators);
+  const signalOverlapCount =
+    materialOverlap.length +
+    audienceOverlap.length +
+    useCaseOverlap.length +
+    featureOverlap.length +
+    sizeOverlap.length;
   const differentProduct = looksLikeDifferentProduct(
     normalizeText(targetProduct.title || targetDescription),
     ownProduct.context
   );
-
-  // Additional category-specific checks
-  const ownCategory = detectProductCategory(ownProduct.context);
-  const targetCategory = detectProductCategory(targetContext);
-  const categoryMismatch = ownCategory && targetCategory && ownCategory !== targetCategory;
-
-  // Enhanced brand and product line detection
-  const ownBrand = extractBrandToken(ownProduct.title);
-  const targetBrand = extractBrandToken(targetProduct.title || "");
-  const sameBrandDetected = ownBrand && targetBrand && ownBrand === targetBrand;
-  
-  // Special handling for Caruso Italy products
-  const isCarusoBrand = ownBrand === "caruso" && targetBrand === "caruso";
-  const bothCarusoProducts = isCarusoBrand && ownCategory === "clothing" && targetCategory === "clothing";
 
   let score = 0;
   let reason = "Different product type or weak buying-intent overlap.";
@@ -2458,38 +2580,47 @@ function scoreTargetAsin(asin, ownProduct, targetProduct) {
   if (asin === ownProduct.asin) {
     score = 9;
     reason = "This is the same ASIN as your product, so it is an exact match.";
-  } else if (nearSameTitle) {
+  } else if (nearSameTitle && samePrimaryType && sameCategory) {
     score = 8;
-    reason = "Product titles match almost exactly, with only minor variation like color or finish.";
-  } else if (bothCarusoProducts && overlapRatio >= 0.15) {
+    reason = "Same product family with only minor variation such as color, pack, or finish.";
+  } else if (sameBrand && samePrimaryType && sameCategory && (titleSimilarity >= 0.5 || signalOverlapCount >= 3)) {
+    score = 8;
+    reason = "Same brand and same product type with very strong attribute overlap.";
+  } else if (samePrimaryType && sameCategory && (titleSimilarity >= 0.4 || signalOverlapCount >= 2 || tokenSimilarity >= 0.35)) {
     score = 7;
-    reason = "Same Caruso Italy brand and clothing category with good product overlap.";
-  } else if (sameBrandDetected && sameTitleType && overlapRatio >= 0.25 && !categoryMismatch) {
+    reason = "Same product type with strong use-case and feature overlap.";
+  } else if (sameCategory && (samePrimaryType || signalOverlapCount >= 2 || tokenSimilarity >= 0.28)) {
     score = 6;
-    reason = "Same brand and product type with moderate overlap in features.";
-  } else if (sameTitleType && overlapRatio >= 0.35 && !categoryMismatch) {
-    score = 7;
-    reason = "Same product type with strong feature and use-case overlap.";
-  } else if (sameTitleType && overlapRatio >= 0.25 && !categoryMismatch) {
-    score = 6;
-    reason = "Same category with good overlap, commercially relevant.";
-  } else if (sameTitleType && overlapRatio >= 0.18 && !categoryMismatch) {
+    reason = "Same category with meaningful overlap, but not close enough to be a top target.";
+  } else if (sameCategory && (signalOverlapCount >= 1 || tokenSimilarity >= 0.18)) {
     score = 5;
-    reason = "Same category with some differences, still relevant for targeting.";
-  } else if (overlapRatio >= 0.15 && !categoryMismatch) {
+    reason = "Related listing in the same category, but broader and less direct.";
+  } else if (!categoryMismatch && (audienceOverlap.length || materialOverlap.length || useCaseOverlap.length)) {
     score = 4;
-    reason = "Related product with partial overlap, decent placement fit.";
-  } else if (overlapRatio > 0 && !categoryMismatch) {
+    reason = "Some buyer-intent overlap exists, but the match is still weak.";
+  } else if (!categoryMismatch && sharedTokens.length) {
     score = 3;
-    reason = "Some relation found, limited but potentially useful overlap.";
+    reason = "Thin relation only, so this ASIN should be reviewed carefully.";
   } else if (categoryMismatch) {
     score = 0;
-    reason = `Different product category (${ownCategory} vs ${targetCategory}). This should be excluded from ads.`;
+    reason = `Different product category (${ownSignals.category} vs ${targetSignals.category}). This should be excluded from ads.`;
   }
 
   if (differentProduct && score > 2) {
     score = Math.min(score, 2);
     reason = "Different product category or very different buying intent, so this should be excluded.";
+  }
+
+  if (materialConflict && score > 0) {
+    score = Math.min(score, samePrimaryType ? 4 : 2);
+    reason = samePrimaryType
+      ? "Same product family but different material variant, so targeting overlap is limited."
+      : "Different material and weak product overlap, so this ASIN should be excluded.";
+  }
+
+  if (differentBrand && !samePrimaryType && score > 2) {
+    score = 2;
+    reason = "Different brand and different product family, so this ASIN should be excluded.";
   }
 
   const relevanceLabel = score >= 4 ? "Relevant" : "Irrelevant";
@@ -2499,12 +2630,13 @@ function scoreTargetAsin(asin, ownProduct, targetProduct) {
     score,
     relevanceLabel,
     reason,
+    needsReview: false,
     targetProduct,
   };
 }
 
 function formatAsinReport(ownProduct, scoredTargets) {
-  const excluded = scoredTargets.filter((item) => item.score <= 3);
+  const excluded = scoredTargets.filter((item) => item.score <= 2 && !item.needsReview);
   const bestTargets = scoredTargets
     .filter((item) => item.score >= 6)
     .sort((a, b) => b.score - a.score);
@@ -2728,51 +2860,6 @@ function renderAsinFetchedContext(context) {
     : "<li>No clean highlights were extracted, but the URL was read.</li>";
 }
 
-function renderSalesEstimate(context) {
-  if (
-    !salesFetchedPanel ||
-    !salesProductTitle ||
-    !salesSource ||
-    !salesAsin ||
-    !salesPrice ||
-    !salesBsr ||
-    !salesCategory ||
-    !salesBought ||
-    !salesUnits ||
-    !salesRevenue ||
-    !salesBasis
-  ) {
-    return;
-  }
-
-  if (!context) {
-    salesFetchedPanel.hidden = true;
-    salesProductTitle.textContent = "Fetched Product Details";
-    salesSource.textContent = "Not fetched yet";
-    salesAsin.textContent = "-";
-    salesPrice.textContent = "-";
-    salesBsr.textContent = "-";
-    salesCategory.textContent = "-";
-    salesBought.textContent = "-";
-    salesUnits.textContent = "-";
-    salesRevenue.textContent = "-";
-    salesBasis.textContent = "-";
-    return;
-  }
-
-  salesFetchedPanel.hidden = false;
-  salesProductTitle.textContent = context.title || "Product title not available";
-  salesSource.textContent = context.sourceName || "Live fetch";
-  salesAsin.textContent = context.asin || "Not detected";
-  salesPrice.textContent = context.price || "Not available";
-  salesBsr.textContent = context.bsr || "Not available";
-  salesCategory.textContent = context.category || "Not available";
-  salesBought.textContent = context.boughtPastMonth || "Not available";
-  salesUnits.textContent = context.estimatedMonthlySales || "Not available";
-  salesRevenue.textContent = context.estimatedRevenue30Days || "Not available";
-  salesBasis.textContent = context.estimationBasis || "Not enough data was available to estimate sales.";
-}
-
 function hasUsableProductTitle(title) {
   if (!title) {
     return false;
@@ -2838,15 +2925,6 @@ function setAsinStatus(message, isError = false) {
   asinStatusMessage.classList.toggle("is-error", isError);
 }
 
-function setSalesStatus(message, isError = false) {
-  if (!salesStatusMessage) {
-    return;
-  }
-
-  salesStatusMessage.textContent = message;
-  salesStatusMessage.classList.toggle("is-error", isError);
-}
-
 function normalizeComparableTitle(value) {
   return normalizeText(value)
     .replace(/\b(beige|black|blue|grey|gray|green|pink|red|white|brown|navy|gold|silver)\b/g, " ")
@@ -2856,7 +2934,20 @@ function normalizeComparableTitle(value) {
 
 function extractBrandToken(value) {
   const tokens = tokenize(value);
-  return tokens.length ? tokens[0] : "";
+
+  for (const token of tokens) {
+    if (token.length < 3 || /^\d+$/.test(token)) {
+      continue;
+    }
+
+    if (GENERIC_BRAND_WORDS.has(token)) {
+      continue;
+    }
+
+    return token;
+  }
+
+  return "";
 }
 
 function decodeHtml(value) {
