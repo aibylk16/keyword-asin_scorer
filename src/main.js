@@ -1484,7 +1484,42 @@ function scoreSingleKeyword(keyword, context, productSignals) {
     matchedTokens.length > 0 && meaningfulMatchedTokens.length === 0;
 
   let score = 0;
-  let reason = "No direct product connection detected.";
+  let reason = "No meaningful connection found between this keyword and the product.";
+
+  const purchaseIntentTokens = [
+    "buy",
+    "purchase",
+    "order",
+    "best",
+    "deal",
+    "price",
+    "sale",
+    "for sale",
+    "buying",
+    "discount",
+  ];
+  const hasPurchaseIntent = purchaseIntentTokens.some((token) =>
+    normalizedKeyword.includes(token)
+  );
+  const strongFeatureMatch =
+    featureOverlap.length + useCaseOverlap.length + materialOverlap.length + sizeOverlap.length > 0;
+  const hasCoreMatch =
+    exactTitleMatch ||
+    exactComparableMatch ||
+    (samePrimaryType && titleContainsPhrase && matchRatio >= 0.75);
+  const hasStrongVariant =
+    samePrimaryType && (signalOverlapCount >= 1 || titleCoverage >= 0.67 || strongFeatureMatch);
+  const hasSecondaryRelevance =
+    samePrimaryType && (matchRatio >= 0.5 || signalOverlapCount >= 1 || descriptionContainsPhrase);
+  const hasModerateRelation =
+    sameCategory && (matchRatio >= 0.5 || signalOverlapCount >= 2 || descriptionContainsPhrase);
+  const hasPartialRelation =
+    sameCategory &&
+    (matchedTokens.length >= 1 || signalOverlapCount >= 1 || descriptionContainsPhrase);
+  const hasWeakRelation = sameCategory;
+  const hasVeryWeakRelation =
+    matchedTokens.length === 1 || sharesCategoryHint(normalizedKeyword, context);
+  const hasSurfaceSimilarityOnly = hasSurfaceSimilarity(normalizedKeyword, context.combined);
 
   if (specificTypeMismatch) {
     score = sameCategory ? 3 : 2;
@@ -1495,46 +1530,44 @@ function scoreSingleKeyword(keyword, context, productSignals) {
   } else if (looksLikeDifferentProduct(normalizedKeyword, context) && !samePrimaryType) {
     score = 0;
     reason = "Keyword describes a different product type or buying intent.";
-  } else if (exactTitleMatch || exactComparableMatch) {
+  } else if (
+    hasCoreMatch ||
+    (samePrimaryType && hasPurchaseIntent && titleCoverage >= 0.5)
+  ) {
     score = 9;
-    reason = "Exact product-title match, which is a core keyword fit.";
-  } else if (samePrimaryType && titleContainsPhrase && matchRatio === 1 && uniqueKeywordTokens.length >= 2) {
-    score = 9;
-    reason = "Keyword matches the core product type and appears as a strong title phrase.";
-  } else if (samePrimaryType && (matchRatio === 1 || titleCoverage >= 0.67) && (signalOverlapCount >= 1 || combinedContainsPhrase)) {
+    reason =
+      "Exact core product match or very strong buying-intent keyword for the same product.";
+  } else if (hasStrongVariant) {
     score = 8;
-    reason = "Keyword strongly matches the same product type with useful attribute overlap.";
-  } else if (samePrimaryType && (matchRatio >= 0.5 || signalOverlapCount >= 1 || descriptionContainsPhrase)) {
+    reason =
+      "Strong feature match or a very close variant of the product.";
+  } else if (hasSecondaryRelevance) {
     score = 7;
-    reason = "Keyword matches the same product type but is more secondary than core.";
-  } else if (sameCategory && (matchRatio >= 0.5 || signalOverlapCount >= 2 || matchedTokens.length >= 2)) {
+    reason =
+      "Strong secondary relevance to the product, useful but not the exact core phrase.";
+  } else if (hasModerateRelation) {
     score = 6;
-    reason = "Keyword is clearly related to the product category and useful for relevance.";
-  } else if (sameCategory && (matchedTokens.length >= 1 || signalOverlapCount >= 1 || descriptionContainsPhrase)) {
+    reason =
+      "Moderately related keyword that fits the broader product category.";
+  } else if (hasPartialRelation) {
     score = 5;
-    reason = "Keyword has a partial feature or category connection, but it is broad.";
-  } else if (sameCategory) {
+    reason =
+      "Partial relevance with some product overlap, but not a strong buyer keyword.";
+  } else if (hasWeakRelation) {
     score = 4;
-    reason = "Keyword stays in the same category, but the connection is weak.";
-  } else if (matchedTokens.length === 1 || signalOverlapCount === 1 || sharesCategoryHint(normalizedKeyword, context)) {
+    reason = "Weak relevance through a category or loose product connection.";
+  } else if (hasVeryWeakRelation) {
     score = 3;
-    reason = "Keyword has only a thin relation to the product and should be reviewed carefully.";
-  } else if (hasSurfaceSimilarity(normalizedKeyword, context.combined)) {
+    reason = "Very weak relation; keyword is barely connected to the product.";
+  } else if (hasSurfaceSimilarityOnly) {
     score = 2;
-    reason = "There is only a marginal text-level similarity with the product details.";
+    reason = "Poor match with only marginal text similarity to the product details.";
   } else if (uniqueKeywordTokens.length === 1 && matchedTokens.length === 0) {
     score = 1;
-    reason = "Keyword is almost irrelevant to the product and lacks clear buying-intent overlap.";
+    reason = "Very poor match with almost no product connection.";
   } else {
     score = 0;
-    reason = "No meaningful connection found between this keyword and the product.";
-  }
-
-  if (differentBrand && !sameBrand && score > 0) {
-    score = Math.min(score, samePrimaryType ? 5 : 2);
-    reason = samePrimaryType
-      ? "Keyword is strongly tied to another brand, so relevance is limited."
-      : "Keyword is strongly tied to another brand and only has marginal product overlap.";
+    reason = "No relation to the product.";
   }
 
   if (materialConflict && score > 0) {
@@ -1542,18 +1575,6 @@ function scoreSingleKeyword(keyword, context, productSignals) {
     reason = samePrimaryType
       ? "Keyword targets a different material variant than the product."
       : "Keyword overlaps only loosely and points to a different material.";
-  }
-
-  if (keywordHasSpecificType && !samePrimaryType && !exactComparableMatch && score > 3) {
-    score = broadOnlyMatch || matchRatio < 0.75 ? 3 : 4;
-    reason = sameCategory
-      ? "Keyword names a specific nearby product type, but the product details only show broad overlap."
-      : "Keyword names a specific product type that is not clearly supported by the product details.";
-  }
-
-  if (broadOnlyMatch && !samePrimaryType && score > 3) {
-    score = 3;
-    reason = "Keyword has only a thin relation to the product and should be reviewed carefully.";
   }
 
   return {
